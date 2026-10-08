@@ -5,6 +5,7 @@ Static analysis of a readable source tree (``settings.source_dir`` /
 the binary is absent or no source is configured. Secrets are REDACTED before
 storage (only rule/location/commit + a masked fingerprint are kept).
 """
+
 from __future__ import annotations
 
 import os
@@ -32,8 +33,18 @@ def run(ctx: StepContext) -> dict:
         # "detect" scans git history when src is a repo; "dir" scans a plain tree.
         mode = "detect" if os.path.isdir(os.path.join(src, ".git")) else "dir"
         args = [
-            binary, mode, "--source", src, "--report-format", "json",
-            "--report-path", report, "--no-banner", "--redact", "--exit-code", "0",
+            binary,
+            mode,
+            "--source",
+            src,
+            "--report-format",
+            "json",
+            "--report-path",
+            report,
+            "--no-banner",
+            "--redact",
+            "--exit-code",
+            "0",
         ]
         rc, out, err = tools.run_cmd(args, timeout=600)
         if rc == 127:
@@ -67,7 +78,8 @@ def run(ctx: StepContext) -> dict:
             )
             f.confirmed = True
             ctx.add_evidence(
-                finding=f, kind="output",
+                finding=f,
+                kind="output",
                 request=f"gitleaks {mode} {leak['rule']}",
                 response=f"{loc} commit={leak['commit']} match={leak['redacted']}",
                 meta={"tool": "gitleaks", "rule": leak["rule"], "commit": leak["commit"]},

@@ -5,6 +5,12 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Load secrets (REDIS_PASSWORD etc.) so checks authenticate correctly.
+set -a
+# shellcheck disable=SC1091
+[ -f ./.env ] && . ./.env
+set +a
+
 pass() { printf "  \033[1;32m✓\033[0m %s\n" "$*"; }
 fail() { printf "  \033[1;31m✗\033[0m %s\n" "$*"; FAILED=1; }
 FAILED=0
@@ -18,7 +24,7 @@ check() {  # name  command...
 
 check "docker daemon"          docker info
 check "postgres"               docker compose exec -T postgres pg_isready
-check "redis"                  bash -c 'docker compose exec -T redis sh -c "redis-cli -a \"\$REDIS_PASSWORD\" ping" | grep -q PONG'
+check "redis"                  bash -c 'docker compose exec -T redis redis-cli -a "'"${REDIS_PASSWORD:-}"'" --no-auth-warning ping 2>/dev/null | grep -q PONG'
 check "minio"                  docker compose exec -T minio mc --version
 check "api /health"            docker compose exec -T api curl -fsS http://localhost:8000/health
 check "frontend"               docker compose exec -T frontend wget -qO- http://localhost:3000 --timeout=5

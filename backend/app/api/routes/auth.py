@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core import security
 from app.core.config import settings
 from app.core.crypto import decrypt, encrypt
-from app.core.deps import db_session, get_current_user, login_rate_limiter
+from app.core.deps import db_session, enforce_login_rate, get_current_user
 from app.models.base import utcnow
 from app.models.user import ApiKey, User
 from app.schemas.auth import (
@@ -33,8 +33,9 @@ def login(
     body: LoginRequest,
     request: Request,
     db: Session = Depends(db_session),
-    _rl: None = Depends(login_rate_limiter),
 ) -> TokenPair:
+    # Throttle by IP + account (after the body is parsed so we know the email).
+    enforce_login_rate(request, body.email)
     user = db.execute(select(User).where(User.email == body.email)).scalar_one_or_none()
     ok = (
         bool(user)

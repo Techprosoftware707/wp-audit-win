@@ -37,7 +37,9 @@ DEFAULT_PIPELINE: list[tuple[str, str, list[str]]] = [
     ("ffuf", "ffuf", ["discovery"]),
     ("zap", "zap", ["discovery"]),
     ("burp", "burp", ["discovery"]),
+    # Static source analysis (never touches the live target).
     ("semgrep", "semgrep", ["discovery"]),
+    ("gitleaks", "gitleaks", ["discovery"]),
     # WordPress-aware scanners (benefit from the fingerprint).
     ("wpscan", "wpscan", ["wp_fingerprint"]),
     ("nuclei", "nuclei", ["wp_fingerprint"]),
@@ -55,11 +57,13 @@ DEFAULT_PIPELINE: list[tuple[str, str, list[str]]] = [
             "ffuf",
             "zap",
             "burp",
-            "wpcli",
             "semgrep",
+            "gitleaks",
+            "wpcli",
         ],
     ),
     ("poc_match", "poc", ["correlation"]),
+    ("change_detect", "correlation", ["correlation"]),
     ("risk", "correlation", ["correlation", "poc_match"]),
     # Terminal stage of a one-click Full Audit: auto-generate the report.
     ("auto_report", "report", ["risk"]),
@@ -146,27 +150,23 @@ def start_scan(
     db.flush()
 
     pipeline = DEFAULT_PIPELINE
-    wanted = set(steps) if steps else None
+    always = {"authorization", "correlation", "risk", "auto_report"}
+    wanted = (set(steps) | always) if steps else None
+    # Which pipeline steps will actually be created (so we can prune dangling deps).
+    included = {name for name, _q, _d in pipeline if wanted is None or name in wanted}
     for i, (name, queue, deps) in enumerate(pipeline):
-        if (
-            wanted is not None
-            and name not in wanted
-            and name
-            not in (
-                "authorization",
-                "correlation",
-                "risk",
-                "auto_report",
-            )
-        ):
+        if name not in included:
             continue
+        # Prune dependencies to included steps only, so an override cannot leave a
+        # step waiting forever on a dependency that was not created.
+        pruned = [d for d in deps if d in included]
         db.add(
             ScanStep(
                 scan_id=scan.id,
                 name=name,
                 queue=queue,
                 ordering=i,
-                depends_on=deps,
+                depends_on=pruned,
                 status=StepStatus.PENDING.value,
             )
         )
@@ -217,8 +217,9 @@ def _abort_if_critical_failed(db: Session, scan: Scan, steps: list[ScanStep]) ->
     """If a CRITICAL step failed, skip every not-yet-terminal step (aborting the
     scan) and return True. This is the control that halts all scanning when the
     run-time authorization re-check fails."""
-    failed_crit = [s.name for s in steps if s.name in CRITICAL_STEPS
-                   and s.status == StepStatus.FAILED.value]
+    failed_crit = [
+        s.name for s in steps if s.name in CRITICAL_STEPS and s.status == StepStatus.FAILED.value
+    ]
     if not failed_crit:
         return False
     changed = False
@@ -400,6 +401,53 @@ def _maybe_finalize(db: Session, scan: Scan) -> None:
     db.add(scan)
     db.flush()
     log.info("scan %s finalized status=%s summary=%s", scan.id, scan.status, scan.summary)
+
+
+def _age_seconds(ts: dt.datetime | None, now: dt.datetime) -> float:
+    if ts is None:
+        return 0.0
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=now.tzinfo)
+    return (now - ts).total_seconds()
+
+
+def reap_stale_scans(db: Session, *, step_timeout_s: int = 1800, requeue_after_s: int = 300) -> int:
+    """Self-healing sweep (run periodically by workers).
+
+    - A step stuck RUNNING past step_timeout_s is failed (the worker likely died).
+    - A step stuck QUEUED past requeue_after_s (a lost job) is reset to PENDING so
+      it is re-enqueued.
+    Then each RUNNING scan is re-driven so it can finalize. Returns #scans touched."""
+    now = utcnow()
+    running = (
+        db.execute(select(Scan).where(Scan.status == ScanStatus.RUNNING.value)).scalars().all()
+    )
+    touched = 0
+    for scan in running:
+        steps = _steps(db, scan)
+        changed = False
+        for s in steps:
+            if (
+                s.status == StepStatus.RUNNING.value
+                and _age_seconds(s.started_at, now) > step_timeout_s
+            ):
+                s.status = StepStatus.FAILED.value
+                s.error = "step timed out (reaper)"
+                s.finished_at = now
+                db.add(s)
+                changed = True
+            elif (
+                s.status == StepStatus.QUEUED.value
+                and _age_seconds(s.updated_at, now) > requeue_after_s
+            ):
+                s.status = StepStatus.PENDING.value  # lost job -> re-enqueue
+                db.add(s)
+                changed = True
+        if changed:
+            db.commit()
+            touched += 1
+        enqueue_ready(db, scan)
+    return touched
 
 
 def cancel_scan(db: Session, scan: Scan) -> None:

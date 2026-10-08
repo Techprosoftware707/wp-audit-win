@@ -17,6 +17,12 @@ def map_risk(risk: str) -> str:
     return _RISK_MAP.get((risk or "").split(" ")[0].lower(), Severity.INFO.value)
 
 
+def _clean_cwe(value) -> str:
+    """Return the CWE id as-is (no zero-stripping); '' for missing/'-1'."""
+    s = str(value or "").strip()
+    return "" if s in ("", "-1", "0") else s
+
+
 def parse_alerts(alerts: list[dict]) -> list[dict]:
     out: list[dict] = []
     for a in alerts or []:
@@ -29,7 +35,8 @@ def parse_alerts(alerts: list[dict]) -> list[dict]:
                 "evidence": (a.get("evidence", "") or "")[:1000],
                 "uri": a.get("url", "") or a.get("uri", ""),
                 "method": a.get("method", "GET"),
-                "cwe": str(a.get("cweid", "") or "").strip("0") or "",
+                # Keep the CWE id verbatim; ZAP uses "-1" for "no CWE".
+                "cwe": _clean_cwe(a.get("cweid", "")),
                 "plugin_id": str(a.get("pluginId", "") or a.get("pluginid", "")),
             }
         )

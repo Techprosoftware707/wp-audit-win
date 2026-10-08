@@ -78,6 +78,27 @@ def _heartbeat_loop() -> None:
         _stop.wait(20)
 
 
+def _maintenance_loop() -> None:
+    """General-worker maintenance: fire due schedules and reap stale scans.
+
+    Gated to workers serving the 'default' queue so only one runs it, avoiding
+    duplicate schedule firing."""
+    from app.services import scheduler
+
+    while not _stop.is_set():
+        _stop.wait(60)
+        if _stop.is_set():
+            break
+        try:
+            with session_scope() as db:
+                fired = scheduler.fire_due_schedules(db)
+                reaped = scan_orchestrator.reap_stale_scans(db)
+            if fired or reaped:
+                log.info("maintenance: fired=%s schedules, reaped=%s scans", fired, reaped)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("maintenance cycle error: %s", exc)
+
+
 def _handle_job(job: dict) -> None:
     step_id = job.get("step_id")
     if not step_id:
@@ -115,6 +136,9 @@ def main() -> None:
     _upsert_worker(WorkerStatus.ONLINE.value)
     hb = threading.Thread(target=_heartbeat_loop, daemon=True)
     hb.start()
+    if "default" in queues:
+        threading.Thread(target=_maintenance_loop, daemon=True).start()
+        log.info("maintenance loop (scheduler + reaper) enabled on this worker")
 
     q = get_queue()
     while not _stop.is_set():

@@ -29,17 +29,20 @@ def _vulns(node: dict) -> list[dict]:
 
 
 def parse_json(text: str) -> dict:
+    empty = {
+        "ok": False,
+        "version": None,
+        "plugins": [],
+        "themes": [],
+        "users": [],
+        "findings": [],
+    }
     try:
         data = json.loads(text)
     except (ValueError, json.JSONDecodeError):
-        return {
-            "ok": False,
-            "version": None,
-            "plugins": [],
-            "themes": [],
-            "users": [],
-            "findings": [],
-        }
+        return empty
+    if not isinstance(data, dict):  # valid JSON that isn't the expected object
+        return empty
 
     result: dict = {
         "ok": True,

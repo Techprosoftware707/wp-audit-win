@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -48,10 +48,18 @@ def _with_auth(db: Session, target: Target) -> TargetWithAuth:
 # ------------------------------------------------------------------ targets
 @router.get("", response_model=list[TargetWithAuth])
 def list_targets(
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(db_session),
     _: User = Depends(require_permission("targets:read")),
 ):
-    targets = db.execute(select(Target).order_by(Target.created_at.desc())).scalars().all()
+    targets = (
+        db.execute(
+            select(Target).order_by(Target.created_at.desc()).limit(limit).offset(offset)
+        )
+        .scalars()
+        .all()
+    )
     return [_with_auth(db, t) for t in targets]
 
 

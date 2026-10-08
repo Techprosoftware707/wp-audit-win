@@ -5,6 +5,7 @@ each leak and REDACTS the secret material — the raw secret is never returned o
 stored (only the rule, location, commit, and a masked fingerprint), per the
 platform's sensitive-evidence handling rules.
 """
+
 from __future__ import annotations
 
 import json

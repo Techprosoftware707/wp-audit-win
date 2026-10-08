@@ -4,6 +4,7 @@ Generates a report for the scan automatically so a single click yields a
 downloadable deliverable. Resilient: a reporting failure is recorded on the
 Report row and never fails the scan.
 """
+
 from __future__ import annotations
 
 from app.core.config import settings

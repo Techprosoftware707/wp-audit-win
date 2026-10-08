@@ -8,6 +8,7 @@ reads it back; parsing lives in the pure :mod:`app.workers.parsers.nikto` module
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 
 from app.workers import tools
@@ -24,6 +25,13 @@ def run(ctx: StepContext) -> dict:
 
     base = ctx.target.base_url.rstrip("/")
     workdir = tempfile.mkdtemp(prefix="nikto-")
+    try:
+        return _scan(ctx, binary, base, workdir)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _scan(ctx: StepContext, binary: str, base: str, workdir: str) -> dict:
     outfile = os.path.join(workdir, "report.json")
     args = [
         binary,

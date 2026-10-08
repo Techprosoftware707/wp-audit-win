@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     access_token_minutes: int = Field(30, alias="WPSEC_ACCESS_TOKEN_MINUTES")
     refresh_token_days: int = Field(7, alias="WPSEC_REFRESH_TOKEN_DAYS")
 
+    # Comma-separated reverse-proxy IPs/CIDRs allowed to set X-Forwarded-For.
+    # Empty = never trust XFF (use the socket peer address).
+    trusted_proxies: str = Field("", alias="WPSEC_TRUSTED_PROXIES")
+
     # Global safety ceiling on scan intensity, regardless of per-target profile.
     max_intensity: str = Field("standard", alias="WPSEC_MAX_INTENSITY")
 
@@ -137,6 +141,10 @@ class Settings(BaseSettings):
         return [q.strip() for q in self.worker_queues.split(",") if q.strip()]
 
     @property
+    def trusted_proxy_list(self) -> list[str]:
+        return [p.strip() for p in self.trusted_proxies.split(",") if p.strip()]
+
+    @property
     def max_intensity_rank(self) -> int:
         try:
             return INTENSITY_ORDER.index(self.max_intensity.lower())
@@ -159,8 +167,15 @@ class Settings(BaseSettings):
                 problems.append("WPSEC_SECRET_KEY is weak or default")
             if not self.credential_key:
                 problems.append("WPSEC_CREDENTIAL_KEY is required in production")
-            if self.postgres_password in ("", "wpsec", "change-me-run-install-sh"):
+            weak = ("", "wpsec", "change-me-run-install-sh")
+            if self.postgres_password in weak:
                 problems.append("POSTGRES_PASSWORD is default/empty")
+            if self.redis_password in weak:
+                problems.append("REDIS_PASSWORD is default/empty")
+            if self.minio_root_password in weak:
+                problems.append("MINIO_ROOT_PASSWORD is default/empty")
+            if not self.admin_password:
+                problems.append("WPSEC_ADMIN_PASSWORD is required in production")
         return problems
 
 

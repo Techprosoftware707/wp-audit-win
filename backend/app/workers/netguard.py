@@ -10,6 +10,7 @@ As defence-in-depth against DNS-rebinding on wildcard scopes, link-local /
 multicast / unspecified resolved addresses are refused even for an in-scope
 hostname unless the scope lists that exact IP/CIDR.
 """
+
 from __future__ import annotations
 
 import ipaddress

@@ -19,7 +19,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models.enums import VerificationMethod, VerificationStatus
-from app.models.finding import Finding, VerificationTest
+from app.models.finding import Finding, VerificationTest, Vulnerability
 from app.models.target import Target
 from app.models.wordpress import Plugin, Theme
 from app.services import authorization as authz
@@ -67,6 +67,10 @@ def _version_match(db: Session, finding: Finding, target: Target) -> tuple[str, 
     version = getattr(comp, "version", "") if comp else ""
 
     vulns = poc_intel.vulns_for_cve(db, finding.cve) if finding.cve else []
+    if not vulns and finding.vulnerability_id:
+        v = db.get(Vulnerability, finding.vulnerability_id)
+        if v is not None:
+            vulns = [v]
     if not vulns:
         return VerificationStatus.INCONCLUSIVE.value, "no catalog entry to compare against"
     for v in vulns:
@@ -82,11 +86,11 @@ def _version_match(db: Session, finding: Finding, target: Target) -> tuple[str, 
     return VerificationStatus.NOT_VULNERABLE.value, f"version {version} is outside affected range"
 
 
-def _endpoint_presence(finding: Finding) -> tuple[str, str, str, str, int | None]:
+def _endpoint_presence(finding: Finding, scope: list[str]) -> tuple[str, str, str, str, int | None]:
     url = finding.affected_asset
     if not url.startswith("http"):
         return VerificationStatus.NOT_TESTABLE.value, "affected asset is not a URL", "", "", None
-    resp = http.fetch(url)
+    resp = http.fetch(url, scope=scope)
     req = f"GET {url}"
     if not resp.ok:
         return VerificationStatus.INCONCLUSIVE.value, resp.error, req, resp.error, None
@@ -115,11 +119,11 @@ def _endpoint_presence(finding: Finding) -> tuple[str, str, str, str, int | None
     )
 
 
-def _info_exposure(finding: Finding) -> tuple[str, str, str, str, int | None]:
+def _info_exposure(finding: Finding, scope: list[str]) -> tuple[str, str, str, str, int | None]:
     url = finding.affected_asset
     if not url.startswith("http"):
         return VerificationStatus.NOT_TESTABLE.value, "affected asset is not a URL", "", "", None
-    resp = http.fetch(url)
+    resp = http.fetch(url, scope=scope)
     req = f"GET {url}"
     if not resp.ok:
         return VerificationStatus.INCONCLUSIVE.value, resp.error, req, resp.error, None
@@ -154,12 +158,16 @@ def run_verification(
 ) -> VerificationTest:
     target = db.get(Target, finding.target_id)
 
-    # Network-touching verification requires a valid authorization at run time.
+    # Network-touching verification requires a valid authorization at run time,
+    # and is confined to that authorization's scope (so the affected-asset URL and
+    # any redirect cannot leave scope / reach internal hosts).
+    scope: list[str] = [target.host]
     if method in NETWORK_METHODS:
         try:
-            authz.assert_scannable(db, target, mode=mode)
+            auth = authz.assert_scannable(db, target, mode=mode)
         except authz.AuthorizationError as exc:
             raise VerificationError(f"target not authorized: {exc}") from exc
+        scope = list(auth.allowed_scope) if auth.allowed_scope else [target.host]
 
     test = VerificationTest(
         finding_id=finding.id,
@@ -187,9 +195,11 @@ def run_verification(
     if method == VerificationMethod.VERSION_MATCH.value:
         status, detail = _version_match(db, finding, target)
     elif method == VerificationMethod.ENDPOINT_PRESENCE.value:
-        status, detail, request_text, response_text, http_status = _endpoint_presence(finding)
+        status, detail, request_text, response_text, http_status = _endpoint_presence(
+            finding, scope
+        )
     elif method == VerificationMethod.INFO_EXPOSURE.value:
-        status, detail, request_text, response_text, http_status = _info_exposure(finding)
+        status, detail, request_text, response_text, http_status = _info_exposure(finding, scope)
     elif method in ACTIVE_METHODS:
         # Active methods are approved here but conservatively report NOT_TESTABLE
         # unless the operator supplies the prerequisites (credentials / payloads),

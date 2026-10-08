@@ -40,7 +40,11 @@ def parse_jsonl(text: str) -> list[dict]:
             obj = json.loads(line)
         except (ValueError, json.JSONDecodeError):
             continue
-        info = obj.get("info", {}) or {}
+        if not isinstance(obj, dict):
+            continue
+        info = obj.get("info", {})
+        if not isinstance(info, dict):
+            info = {}
         out.append(
             {
                 "template_id": obj.get("template-id") or obj.get("templateID") or "",

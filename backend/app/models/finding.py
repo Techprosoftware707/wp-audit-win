@@ -56,9 +56,7 @@ class Finding(Base, TimestampMixin):
     __tablename__ = "findings"
     # Enforce one finding per (target, dedup signature); add_finding() handles the
     # resulting IntegrityError by merging the concurrent detector.
-    __table_args__ = (
-        UniqueConstraint("target_id", "dedup_key", name="uq_finding_target_dedup"),
-    )
+    __table_args__ = (UniqueConstraint("target_id", "dedup_key", name="uq_finding_target_dedup"),)
 
     id: Mapped[str] = uuid_pk()
     finding_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)

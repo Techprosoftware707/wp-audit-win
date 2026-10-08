@@ -73,6 +73,16 @@ RUN set -eux; \
 RUN ( pip install --no-cache-dir semgrep && echo "semgrep installed" ) \
     || echo "WARN: semgrep install failed; semgrep step will report unavailable at runtime"
 
+# gitleaks (secret scanning of source / git history; single Go binary).
+RUN set -eux; \
+    gl_ver=8.21.2; arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) a=x64;; arm64) a=arm64;; *) a=x64;; esac; \
+    ( curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${gl_ver}/gitleaks_${gl_ver}_linux_${a}.tar.gz" -o /tmp/gl.tgz \
+      && tar -xzf /tmp/gl.tgz -C /usr/local/bin gitleaks \
+      && chmod +x /usr/local/bin/gitleaks && rm -f /tmp/gl.tgz \
+      && echo "gitleaks installed" ) \
+    || echo "WARN: gitleaks install failed; gitleaks step will report unavailable at runtime"
+
 # Python app + deps.
 COPY pyproject.toml ./
 COPY app ./app

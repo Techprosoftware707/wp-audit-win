@@ -12,7 +12,9 @@ OUT="backups/wpsec-backup-${TS}"
 mkdir -p "$OUT"
 
 echo "[backup] dumping PostgreSQL"
-docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-wpsec}" "${POSTGRES_DB:-wpsec}" \
+# --clean --if-exists so restore can overwrite a populated database.
+docker compose exec -T postgres pg_dump --clean --if-exists \
+  -U "${POSTGRES_USER:-wpsec}" "${POSTGRES_DB:-wpsec}" \
   | gzip > "${OUT}/postgres.sql.gz"
 
 echo "[backup] exporting MinIO evidence bucket"

@@ -26,11 +26,35 @@ def db_session() -> Iterator[Session]:
     yield from get_db()
 
 
+def _ip_in(entries: list[str], ip: str) -> bool:
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for entry in entries:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def get_client_ip(request: Request) -> str:
+    """Resolve the real client IP, trusting X-Forwarded-For ONLY from configured
+    reverse proxies. Otherwise the header is attacker-controlled and ignored."""
+    peer = request.client.host if request.client else ""
+    trusted = settings.trusted_proxy_list
     fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    if fwd and trusted and _ip_in(trusted, peer):
+        # Walk the chain right-to-left, discarding our own trusted proxies; the
+        # first non-trusted hop is the real client as seen by the edge proxy.
+        for hop in reversed([h.strip() for h in fwd.split(",") if h.strip()]):
+            if not _ip_in(trusted, hop):
+                return hop
+    return peer
 
 
 def _user_from_bearer(db: Session, token: str) -> User | None:
@@ -121,9 +145,14 @@ def rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     return len(bucket) <= limit
 
 
-def login_rate_limiter(request: Request) -> None:
+def enforce_login_rate(request: Request, email: str) -> None:
+    """Throttle login by BOTH source IP and target account, so rotating a spoofed
+    X-Forwarded-For cannot mint fresh buckets and per-account guessing is capped."""
     ip = get_client_ip(request)
-    if not rate_limit(f"login:{ip}", limit=10, window_seconds=300):
+    email_key = (email or "").strip().lower()
+    too_many = not rate_limit(f"login:ip:{ip}", limit=20, window_seconds=300)
+    too_many |= not rate_limit(f"login:email:{email_key}", limit=10, window_seconds=300)
+    if too_many:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts; try again later.",

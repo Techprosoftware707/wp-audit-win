@@ -34,9 +34,11 @@ def next_finding_code(db: Session) -> str:
     unique constraint. add_finding() additionally retries on the rare race."""
     year = utcnow().year
     prefix = f"FIND-{year}-"
-    rows = db.execute(
-        select(Finding.finding_code).where(Finding.finding_code.like(prefix + "%"))
-    ).scalars().all()
+    rows = (
+        db.execute(select(Finding.finding_code).where(Finding.finding_code.like(prefix + "%")))
+        .scalars()
+        .all()
+    )
     max_n = 0
     plen = len(prefix)
     for code in rows:

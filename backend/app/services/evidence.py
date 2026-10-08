@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import time
 
 from sqlalchemy.orm import Session
 
@@ -20,26 +21,50 @@ from app.models.finding import Evidence
 log = get_logger("evidence")
 _client = None
 _bucket_ready = False
+# Negative cache: when MinIO is unreachable, skip calls until this time so a
+# single outage does not cost multi-second client retries on every artifact.
+_down_until = 0.0
+_DOWN_COOLDOWN_S = 60.0
 
 
 def _get_client():
     global _client
     if _client is None:
+        import urllib3
         from minio import Minio
 
+        # Bounded timeouts + no client-side retries so an outage fails fast and
+        # we fall back to inline storage instead of stalling the pipeline.
+        http_client = urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=3.0, read=5.0),
+            retries=urllib3.Retry(total=0, connect=0, read=0, redirect=0),
+            maxsize=8,
+        )
         _client = Minio(
             f"{settings.minio_host}:{settings.minio_port}",
             access_key=settings.minio_root_user,
             secret_key=settings.minio_root_password,
             secure=settings.minio_secure,
+            http_client=http_client,
         )
     return _client
+
+
+def _minio_down() -> bool:
+    return _down_until > time.monotonic()
+
+
+def _mark_down() -> None:
+    global _down_until
+    _down_until = time.monotonic() + _DOWN_COOLDOWN_S
 
 
 def _ensure_bucket() -> bool:
     global _bucket_ready
     if _bucket_ready:
         return True
+    if _minio_down():
+        return False
     try:
         c = _get_client()
         if not c.bucket_exists(settings.minio_bucket):
@@ -47,7 +72,11 @@ def _ensure_bucket() -> bool:
         _bucket_ready = True
         return True
     except Exception as exc:  # noqa: BLE001
-        log.warning("MinIO unavailable, storing evidence inline only: %s", exc)
+        _mark_down()
+        log.warning(
+            "MinIO unavailable (cooldown %ss), storing evidence inline only: %s",
+            int(_DOWN_COOLDOWN_S), exc,
+        )
         return False
 
 
@@ -55,7 +84,7 @@ def put_artifact(key: str, data: bytes, content_type: str = "application/octet-s
     """Upload bytes to object storage; return the storage key or '' on failure."""
     if settings.queue_backend == "memory":  # tests / local in-proc: skip object storage
         return ""
-    if not _ensure_bucket():
+    if _minio_down() or not _ensure_bucket():
         return ""
     try:
         c = _get_client()
@@ -68,6 +97,7 @@ def put_artifact(key: str, data: bytes, content_type: str = "application/octet-s
         )
         return key
     except Exception as exc:  # noqa: BLE001
+        _mark_down()
         log.warning("evidence upload failed (%s); inline only", exc)
         return ""
 

@@ -2,39 +2,19 @@
 
 from __future__ import annotations
 
-import datetime as dt
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.deps import db_session, require_permission
-from app.models.base import utcnow
 from app.models.report import Schedule
 from app.models.target import Target
 from app.models.user import User
 from app.schemas.misc import ScheduleCreate, ScheduleOut
 from app.services import audit
+from app.services.scheduler import compute_next_run
 
 router = APIRouter(tags=["schedules"])
-
-_INTERVALS = {
-    "hourly": dt.timedelta(hours=1),
-    "6h": dt.timedelta(hours=6),
-    "daily": dt.timedelta(days=1),
-    "weekly": dt.timedelta(weeks=1),
-    "monthly": dt.timedelta(days=30),
-}
-
-
-def compute_next_run(
-    interval: str, cron: str, from_time: dt.datetime | None = None
-) -> dt.datetime | None:
-    base = from_time or utcnow()
-    if cron:
-        # Cron strings are evaluated by the scheduler daemon; next_run is advisory.
-        return base + dt.timedelta(hours=1)
-    return base + _INTERVALS.get(interval, dt.timedelta(days=1))
 
 
 @router.get("/schedules", response_model=list[ScheduleOut])

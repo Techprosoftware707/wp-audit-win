@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 _NUM = re.compile(r"\d+")
+_PRERELEASE = re.compile(r"[-_.]?(alpha|beta|rc|dev|pre|a|b)\d*\b", re.IGNORECASE)
 
 
 def parse(v: str) -> tuple[int, ...]:
@@ -14,11 +15,20 @@ def parse(v: str) -> tuple[int, ...]:
     return tuple(int(p) for p in parts[:5]) if parts else ()
 
 
+def _is_prerelease(v: str) -> bool:
+    return bool(v) and bool(_PRERELEASE.search(str(v)))
+
+
+def _key(v: str) -> tuple:
+    # A pre-release sorts BELOW the same numeric release (1.0.0-rc1 < 1.0.0).
+    return (parse(v), 0 if _is_prerelease(v) else 1)
+
+
 def _cmp(a: str, b: str) -> int:
-    ta, tb = parse(a), parse(b)
-    if ta == tb:
+    ka, kb = _key(a), _key(b)
+    if ka == kb:
         return 0
-    return -1 if ta < tb else 1
+    return -1 if ka < kb else 1
 
 
 def lt(a: str, b: str) -> bool:

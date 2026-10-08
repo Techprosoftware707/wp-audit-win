@@ -87,8 +87,7 @@ def run(ctx: StepContext) -> dict:
         severity, _pattern = verdict
         word = h["word"]
         description = (
-            f"ffuf discovered a sensitive path at {url} "
-            f"(HTTP {h['status']}, {h['length']} bytes)."
+            f"ffuf discovered a sensitive path at {url} (HTTP {h['status']}, {h['length']} bytes)."
         )
         f = ctx.add_finding(
             title=f"Sensitive file/dir exposed: {word}",
@@ -105,8 +104,7 @@ def run(ctx: StepContext) -> dict:
             kind="output",
             request=f"GET {url}",
             response=(
-                f"status={h['status']} length={h['length']} "
-                f"content-type={h['content_type']}"
+                f"status={h['status']} length={h['length']} content-type={h['content_type']}"
             ),
             meta={"tool": "ffuf", "fuzz": word, "status": h["status"]},
         )

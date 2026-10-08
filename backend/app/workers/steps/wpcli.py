@@ -11,6 +11,7 @@ docs/STATUS.md.
 from __future__ import annotations
 
 import json
+import shlex
 
 from sqlalchemy import select
 
@@ -62,9 +63,13 @@ def run(ctx: StepContext) -> dict:
         # anything not in it.
         client.load_host_keys(known_hosts_file)
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    else:
-        # No pinned host key: accept on first connect (recorded via evidence).
+    elif meta.get("accept_unknown_host_key"):
+        # Operator explicitly opted in to trust-on-first-use for this credential.
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        # Secure default: refuse an unknown host key (prevents MITM). Pin a key
+        # via meta.known_hosts_file, or set meta.accept_unknown_host_key=true.
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
     results: dict = {}
     try:
@@ -76,7 +81,8 @@ def run(ctx: StepContext) -> dict:
         else:
             client.connect(host, port=port, username=cred.username, password=secret, timeout=20)
 
-        prefix = f"cd {wp_path} && " if wp_path else ""
+        # Quote the operator-supplied path so it cannot inject shell syntax.
+        prefix = f"cd {shlex.quote(wp_path)} && " if wp_path else ""
         for name, cmd in READ_ONLY_COMMANDS.items():
             full = prefix + "wp " + " ".join(cmd) + " --skip-plugins --skip-themes"
             _in, out, errp = client.exec_command(full, timeout=60)  # noqa: S601 - controlled

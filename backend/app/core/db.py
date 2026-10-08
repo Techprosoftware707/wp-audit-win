@@ -39,6 +39,7 @@ engine = _make_engine()
 
 
 if engine.url.get_backend_name() == "sqlite":
+
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_conn, _record):  # pragma: no cover - driver glue
         """WAL + busy_timeout so a worker and the API can share a file-backed
@@ -51,6 +52,8 @@ if engine.url.get_backend_name() == "sqlite":
             cur.execute("PRAGMA foreign_keys=ON")
         finally:
             cur.close()
+
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 
 

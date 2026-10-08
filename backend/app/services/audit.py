@@ -34,8 +34,9 @@ def record(
     ip = ""
     ua = ""
     if request is not None:
-        fwd = request.headers.get("x-forwarded-for")
-        ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+        from app.core.deps import get_client_ip  # local import avoids a cycle
+
+        ip = get_client_ip(request)
         ua = request.headers.get("user-agent", "")[:512]
 
     entry = AuditLog(

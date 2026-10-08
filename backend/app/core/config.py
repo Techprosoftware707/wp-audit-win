@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", alias="WPSEC_LOG_LEVEL")
     public_url: str = Field("https://localhost", alias="WPSEC_PUBLIC_URL")
 
-    secret_key: str = Field("dev-insecure-secret-change-me", alias="WPSEC_SECRET_KEY")
+    secret_key: str = Field(
+        "dev-insecure-secret-change-me-in-production-only", alias="WPSEC_SECRET_KEY"
+    )
     credential_key: str = Field("", alias="WPSEC_CREDENTIAL_KEY")
 
     access_token_minutes: int = Field(30, alias="WPSEC_ACCESS_TOKEN_MINUTES")

@@ -1,0 +1,331 @@
+"""Scan orchestration.
+
+Builds the step DAG for a scan, enforces authorization + intensity limits, and
+drives execution. The same step runner is used by the in-process path
+(dev/test) and the distributed workers, so behaviour is identical everywhere.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import INTENSITY_ORDER, settings
+from app.core.logging import get_logger
+from app.core.redis import get_queue
+from app.models.base import utcnow
+from app.models.enums import ScanMode, ScanStatus, Severity, StepStatus
+from app.models.scan import Scan, ScanStep
+from app.models.system import Worker
+from app.models.target import Target
+from app.models.user import User
+from app.services import authorization as authz
+
+log = get_logger("orchestrator")
+
+# Each entry: (step name, queue, [dependency step names]).
+DEFAULT_PIPELINE: list[tuple[str, str, list[str]]] = [
+    ("authorization", "default", []),
+    ("discovery", "fingerprint", ["authorization"]),
+    ("wp_fingerprint", "fingerprint", ["discovery"]),
+    ("nmap", "nmap", ["discovery"]),
+    ("wpscan", "wpscan", ["wp_fingerprint"]),
+    ("nuclei", "nuclei", ["wp_fingerprint"]),
+    ("zap", "zap", ["discovery"]),
+    ("wpcli", "wpcli", ["wp_fingerprint"]),
+    (
+        "correlation",
+        "correlation",
+        [
+            "wp_fingerprint",
+            "wpscan",
+            "nuclei",
+            "nmap",
+            "zap",
+            "wpcli",
+        ],
+    ),
+    ("poc_match", "poc", ["correlation"]),
+    ("risk", "correlation", ["correlation", "poc_match"]),
+]
+
+TERMINAL_STEP_STATES = {
+    StepStatus.COMPLETED.value,
+    StepStatus.FAILED.value,
+    StepStatus.SKIPPED.value,
+}
+
+
+def _intensity_rank(name: str) -> int:
+    try:
+        return INTENSITY_ORDER.index(name.lower())
+    except ValueError:
+        return INTENSITY_ORDER.index("safe")
+
+
+def effective_intensity(requested: str, target: Target, auth) -> str:
+    ranks = [
+        _intensity_rank(requested),
+        _intensity_rank(target.max_intensity),
+        _intensity_rank(auth.max_intensity),
+        settings.max_intensity_rank,
+    ]
+    return INTENSITY_ORDER[min(ranks)]
+
+
+def queue_has_worker(db: Session, queue: str, *, max_age_seconds: int = 90) -> bool:
+    cutoff = utcnow() - dt.timedelta(seconds=max_age_seconds)
+    workers = db.execute(select(Worker).where(Worker.status != "offline")).scalars().all()
+    for w in workers:
+        if w.last_heartbeat is None:
+            continue
+        hb = w.last_heartbeat
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=cutoff.tzinfo)
+        if hb < cutoff:
+            continue
+        if queue in [q.strip() for q in (w.queues or "").split(",")]:
+            return True
+    return False
+
+
+def start_scan(
+    db: Session,
+    *,
+    target: Target,
+    user: User | None,
+    profile: str | None = None,
+    mode: str = ScanMode.PRODUCTION.value,
+    steps: list[str] | None = None,
+) -> Scan:
+    """Create and launch a scan. Raises authz.AuthorizationError if not allowed."""
+    auth = authz.assert_scannable(db, target, mode=mode)
+
+    requested = profile or target.scan_profile
+    eff = effective_intensity(requested, target, auth)
+
+    scan = Scan(
+        target_id=target.id,
+        authorization_id=auth.id,
+        status=ScanStatus.QUEUED.value,
+        mode=mode,
+        profile=requested,
+        effective_intensity=eff,
+        created_by=user.id if user else None,
+        started_at=utcnow(),
+    )
+    db.add(scan)
+    db.flush()
+
+    pipeline = DEFAULT_PIPELINE
+    wanted = set(steps) if steps else None
+    for i, (name, queue, deps) in enumerate(pipeline):
+        if (
+            wanted is not None
+            and name not in wanted
+            and name
+            not in (
+                "authorization",
+                "correlation",
+                "risk",
+            )
+        ):
+            continue
+        db.add(
+            ScanStep(
+                scan_id=scan.id,
+                name=name,
+                queue=queue,
+                ordering=i,
+                depends_on=deps,
+                status=StepStatus.PENDING.value,
+            )
+        )
+    db.flush()
+
+    log.info("scan %s created for target %s (intensity=%s)", scan.id, target.host, eff)
+
+    if settings.queue_backend == "memory":
+        execute_scan_inline(db, scan)
+    else:
+        scan.status = ScanStatus.RUNNING.value
+        enqueue_ready(db, scan)
+    return scan
+
+
+def _steps(db: Session, scan: Scan) -> list[ScanStep]:
+    return (
+        db.execute(select(ScanStep).where(ScanStep.scan_id == scan.id).order_by(ScanStep.ordering))
+        .scalars()
+        .all()
+    )
+
+
+def _ready_steps(steps: list[ScanStep]) -> list[ScanStep]:
+    done = {s.name for s in steps if s.status in TERMINAL_STEP_STATES}
+    ready = []
+    for s in steps:
+        if s.status != StepStatus.PENDING.value:
+            continue
+        if all(dep in done for dep in (s.depends_on or [])):
+            ready.append(s)
+    return ready
+
+
+def enqueue_ready(db: Session, scan: Scan) -> None:
+    """Enqueue ready steps to their queues; skip steps with no capable worker."""
+    queue = get_queue()
+    changed = True
+    while changed:
+        changed = False
+        steps = _steps(db, scan)
+        for step in _ready_steps(steps):
+            if not queue_has_worker(db, step.queue):
+                step.status = StepStatus.SKIPPED.value
+                step.error = f"no online worker serving queue '{step.queue}'"
+                step.finished_at = utcnow()
+                db.add(step)
+                changed = True
+                continue
+            step.status = StepStatus.QUEUED.value
+            db.add(step)
+            db.flush()
+            queue.enqueue(
+                step.queue,
+                {
+                    "scan_id": scan.id,
+                    "step_id": step.id,
+                    "step_name": step.name,
+                },
+            )
+    db.flush()
+    _maybe_finalize(db, scan)
+
+
+def run_step(db: Session, step_id: str) -> None:
+    """Execute a single step (called inline or by a worker), then advance."""
+    from app.workers.base import StepContext
+    from app.workers.steps import get_registry
+
+    step = db.get(ScanStep, step_id)
+    if step is None or step.status in TERMINAL_STEP_STATES:
+        return
+    scan = db.get(Scan, step.scan_id)
+    target = db.get(Target, scan.target_id)
+
+    step.status = StepStatus.RUNNING.value
+    step.started_at = utcnow()
+    db.add(step)
+    db.flush()
+
+    registry = get_registry()
+    fn = registry.get(step.name)
+    try:
+        if fn is None:
+            step.status = StepStatus.SKIPPED.value
+            step.error = f"no implementation for step '{step.name}'"
+        else:
+            ctx = StepContext(
+                db=db,
+                scan=scan,
+                target=target,
+                step_name=step.name,
+                intensity=scan.effective_intensity,
+            )
+            summary = fn(ctx) or {}
+            step.output_summary = summary
+            step.status = (
+                StepStatus.SKIPPED.value if summary.get("skipped") else StepStatus.COMPLETED.value
+            )
+            if summary.get("skipped"):
+                step.error = str(summary.get("reason", ""))
+    except Exception as exc:  # noqa: BLE001 - isolate step failures
+        step.status = StepStatus.FAILED.value
+        step.error = f"{type(exc).__name__}: {exc}"
+        log.exception("step %s failed", step.name)
+    finally:
+        step.finished_at = utcnow()
+        db.add(step)
+        db.flush()
+
+
+def execute_scan_inline(db: Session, scan: Scan) -> None:
+    """Run the whole scan synchronously (dev/test). Steps self-skip if a tool
+    is unavailable, so this always terminates."""
+    scan.status = ScanStatus.RUNNING.value
+    db.flush()
+    guard = 0
+    while True:
+        guard += 1
+        if guard > 500:  # safety against a malformed DAG
+            break
+        steps = _steps(db, scan)
+        ready = _ready_steps(steps)
+        if not ready:
+            break
+        for step in ready:
+            run_step(db, step.id)
+    _maybe_finalize(db, scan)
+
+
+def advance(db: Session, scan: Scan) -> None:
+    """Called by a worker after finishing a step (redis mode)."""
+    enqueue_ready(db, scan)
+
+
+def _maybe_finalize(db: Session, scan: Scan) -> None:
+    steps = _steps(db, scan)
+    if not steps:
+        return
+    if not all(s.status in TERMINAL_STEP_STATES for s in steps):
+        # Still work to do.
+        if scan.status == ScanStatus.QUEUED.value:
+            scan.status = ScanStatus.RUNNING.value
+        return
+
+    from app.models.finding import Finding
+
+    findings = db.execute(select(Finding).where(Finding.scan_id == scan.id)).scalars().all()
+    counts = {s.value: 0 for s in Severity}
+    confirmed = 0
+    unverified = 0
+    for f in findings:
+        counts[f.severity] = counts.get(f.severity, 0) + 1
+        if f.confirmed:
+            confirmed += 1
+        if f.verification_status == "unverified":
+            unverified += 1
+
+    # A scan is 'failed' only if it could not get past authorization/discovery.
+    hard = {s.name: s for s in steps if s.name in ("authorization", "discovery")}
+    failed_hard = any(s.status == StepStatus.FAILED.value for s in hard.values())
+
+    scan.summary = {
+        **counts,
+        "total": len(findings),
+        "confirmed": confirmed,
+        "unverified": unverified,
+        "steps_total": len(steps),
+        "steps_skipped": sum(1 for s in steps if s.status == StepStatus.SKIPPED.value),
+        "steps_failed": sum(1 for s in steps if s.status == StepStatus.FAILED.value),
+    }
+    scan.finished_at = utcnow()
+    scan.status = ScanStatus.FAILED.value if failed_hard else ScanStatus.COMPLETED.value
+    db.add(scan)
+    db.flush()
+    log.info("scan %s finalized status=%s summary=%s", scan.id, scan.status, scan.summary)
+
+
+def cancel_scan(db: Session, scan: Scan) -> None:
+    for step in _steps(db, scan):
+        if step.status in (StepStatus.PENDING.value, StepStatus.QUEUED.value):
+            step.status = StepStatus.SKIPPED.value
+            step.error = "cancelled"
+            step.finished_at = utcnow()
+            db.add(step)
+    scan.status = ScanStatus.CANCELLED.value
+    scan.finished_at = utcnow()
+    db.add(scan)
+    db.flush()

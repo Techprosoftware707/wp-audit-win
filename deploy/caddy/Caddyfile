@@ -1,0 +1,38 @@
+# Caddy reverse proxy for wp-audit-win.
+# Terminates TLS (self-signed via Caddy's internal CA by default) and routes:
+#   /api/*  -> FastAPI backend
+#   /*      -> Next.js frontend
+#
+# For a real domain, replace `localhost` with it and Caddy will provision a
+# Let's Encrypt certificate automatically (free, no paid dependency).
+
+{
+	# Use Caddy's internal CA for localhost by default (no external calls).
+	# Remove this block and set an email to enable automatic Let's Encrypt.
+	local_certs
+	admin off
+}
+
+localhost, https://localhost {
+	encode gzip
+
+	# Security headers (the platform hardens itself).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+		-Server
+	}
+
+	# API -> backend. Strip the /api prefix before forwarding.
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Everything else -> frontend.
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

@@ -1,0 +1,216 @@
+# =============================================================================
+# wp-audit-win — WordPress Security Audit & Pentest Management Platform
+#
+# Network isolation:
+#   - control-plane: api, frontend, reverse-proxy, postgres, redis, minio
+#   - scanner:       workers + zap engine (+ outbound to authorized targets)
+# The API/web tier is NOT on the scanner network and has NO docker socket.
+# Scanner workers bridge both networks (control for queue/db, scanner for zap).
+#
+# Base stack:        docker compose up -d
+# With heavy scanners (wpscan/zap/wpcli): docker compose --profile scanners up -d
+# =============================================================================
+
+x-common-env: &common-env
+  WPSEC_ENV: ${WPSEC_ENV:-production}
+  WPSEC_LOG_LEVEL: ${WPSEC_LOG_LEVEL:-INFO}
+  WPSEC_SECRET_KEY: ${WPSEC_SECRET_KEY:?set WPSEC_SECRET_KEY in .env}
+  WPSEC_CREDENTIAL_KEY: ${WPSEC_CREDENTIAL_KEY:?set WPSEC_CREDENTIAL_KEY in .env}
+  WPSEC_PUBLIC_URL: ${WPSEC_PUBLIC_URL:-https://localhost}
+  WPSEC_MAX_INTENSITY: ${WPSEC_MAX_INTENSITY:-standard}
+  POSTGRES_USER: ${POSTGRES_USER:-wpsec}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  POSTGRES_DB: ${POSTGRES_DB:-wpsec}
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+  MINIO_HOST: ${MINIO_HOST:-minio}
+  MINIO_PORT: ${MINIO_PORT:-9000}
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wpsec}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+  MINIO_BUCKET: ${MINIO_BUCKET:-wpsec-evidence}
+  MINIO_SECURE: ${MINIO_SECURE:-false}
+  ZAP_HOST: zap
+  ZAP_PORT: "8090"
+  WPSCAN_API_TOKEN: ${WPSCAN_API_TOKEN:-}
+  NVD_API_KEY: ${NVD_API_KEY:-}
+
+services:
+  # ---------------------------------------------------------------- data tier
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wpsec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-wpsec}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wpsec} -d ${POSTGRES_DB:-wpsec}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-wpsec}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    volumes:
+      - miniodata:/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------- app tier
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: wpsec/backend:latest
+    restart: unless-stopped
+    command: ["api"]
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    networks: [control]
+    # No docker socket. No scanner network. No host mounts.
+
+  worker:
+    # General worker: fingerprint, correlation, poc-match, report, nmap, nuclei.
+    build:
+      context: ./backend
+      dockerfile: ../worker/Dockerfile
+    image: wpsec/worker:latest
+    restart: unless-stopped
+    command: ["worker"]
+    environment:
+      <<: *common-env
+      WPSEC_WORKER_NAME: worker-general
+      WPSEC_WORKER_QUEUES: "default,fingerprint,nmap,nuclei,correlation,poc,report"
+      WPSEC_WORKER_CONCURRENCY: ${WPSEC_WORKER_CONCURRENCY:-2}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    networks: [control, scanner]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker-wpscan:
+    image: wpsec/worker:latest
+    restart: unless-stopped
+    command: ["worker"]
+    profiles: ["scanners"]
+    environment:
+      <<: *common-env
+      WPSEC_WORKER_NAME: worker-wpscan
+      WPSEC_WORKER_QUEUES: "wpscan"
+      WPSEC_WORKER_CONCURRENCY: "1"
+    depends_on: [redis, postgres]
+    networks: [control, scanner]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker-wpcli:
+    image: wpsec/worker:latest
+    restart: unless-stopped
+    command: ["worker"]
+    profiles: ["scanners"]
+    environment:
+      <<: *common-env
+      WPSEC_WORKER_NAME: worker-wpcli
+      WPSEC_WORKER_QUEUES: "wpcli"
+      WPSEC_WORKER_CONCURRENCY: "1"
+    depends_on: [redis, postgres]
+    networks: [control, scanner]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker-zap:
+    image: wpsec/worker:latest
+    restart: unless-stopped
+    command: ["worker"]
+    profiles: ["scanners"]
+    environment:
+      <<: *common-env
+      WPSEC_WORKER_NAME: worker-zap
+      WPSEC_WORKER_QUEUES: "zap"
+      WPSEC_WORKER_CONCURRENCY: "1"
+    depends_on: [redis, postgres, zap]
+    networks: [control, scanner]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    restart: unless-stopped
+    profiles: ["scanners"]
+    command: >
+      zap.sh -daemon -host 0.0.0.0 -port 8090
+      -config api.disablekey=false -config api.key=${WPSEC_SECRET_KEY}
+      -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
+    networks: [scanner]
+    # ZAP only reachable from scanner workers, never from the control plane.
+
+  # ---------------------------------------------------------------- web tier
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: wpsec/frontend:latest
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-/api}
+    depends_on: [api]
+    networks: [control]
+
+  reverse-proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api, frontend]
+    networks: [control]
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  caddydata:
+  caddyconfig:
+
+networks:
+  control:
+    driver: bridge
+  scanner:
+    driver: bridge

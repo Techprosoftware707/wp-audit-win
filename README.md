@@ -44,7 +44,9 @@ exploit code. The PoC component is an *intelligence and metadata* layer (see
 ## Stack (all free / open-source)
 
 Next.js · React · Tailwind · FastAPI · PostgreSQL · Redis · MinIO · Caddy ·
-WPScan · Nuclei · OWASP ZAP · Nmap · WP-CLI · Docker.
+WPScan · Nuclei · OWASP ZAP · Nmap · WP-CLI · WhatWeb · Nikto · ffuf · Semgrep ·
+Docker. (Burp Suite is supported as an **optional** operator-configured
+integration — OWASP ZAP is the built-in free default for deep web testing.)
 
 No paid SaaS, no paid scanners, no mandatory proprietary API. `WPSCAN_API_TOKEN`
 and `NVD_API_KEY` are **optional** enrichment only; everything works without them.

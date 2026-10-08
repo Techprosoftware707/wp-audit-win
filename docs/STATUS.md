@@ -41,6 +41,19 @@ available, so the base stack always completes a scan. Install them via the
 - `zap` — needs the ZAP daemon (the `zap` service, `scanners` profile).
 - `wpcli` — needs an SSH credential on the target **and** `paramiko` on the
   worker; otherwise it skips.
+- `whatweb` — needs the `whatweb` gem; technology/server fingerprinting.
+- `nikto` — needs the `nikto` binary (worker image installs 2.5.x from source).
+- `ffuf` — needs the `ffuf` binary; uses `WPSEC_FFUF_WORDLIST` or the bundled
+  WordPress wordlist; active content discovery (intensity `standard`+).
+- `semgrep` — needs the `semgrep` binary **and** a source tree
+  (`WPSEC_SOURCE_DIR`); static analysis of PHP/plugin/theme source.
+- `burp` — **optional, commercial**: skips unless `BURP_API_URL` is set; drives a
+  scan via the Burp Suite REST API. OWASP ZAP is the free default.
+
+The one-click **Full Audit** pipeline runs all of the above automatically and ends
+with an `auto_report` step that generates a downloadable report — a single click
+produces the deliverable. Every step still runs only after the authorization gate
+passes.
 
 ## Explicit extension points (architected, opt-in)
 

@@ -30,25 +30,39 @@ DEFAULT_PIPELINE: list[tuple[str, str, list[str]]] = [
     ("authorization", "default", []),
     ("discovery", "fingerprint", ["authorization"]),
     ("wp_fingerprint", "fingerprint", ["discovery"]),
+    # Discovery-driven scanners (need only the base URL).
+    ("whatweb", "whatweb", ["discovery"]),
     ("nmap", "nmap", ["discovery"]),
+    ("nikto", "nikto", ["discovery"]),
+    ("ffuf", "ffuf", ["discovery"]),
+    ("zap", "zap", ["discovery"]),
+    ("burp", "burp", ["discovery"]),
+    ("semgrep", "semgrep", ["discovery"]),
+    # WordPress-aware scanners (benefit from the fingerprint).
     ("wpscan", "wpscan", ["wp_fingerprint"]),
     ("nuclei", "nuclei", ["wp_fingerprint"]),
-    ("zap", "zap", ["discovery"]),
     ("wpcli", "wpcli", ["wp_fingerprint"]),
     (
         "correlation",
         "correlation",
         [
             "wp_fingerprint",
+            "whatweb",
             "wpscan",
             "nuclei",
             "nmap",
+            "nikto",
+            "ffuf",
             "zap",
+            "burp",
             "wpcli",
+            "semgrep",
         ],
     ),
     ("poc_match", "poc", ["correlation"]),
     ("risk", "correlation", ["correlation", "poc_match"]),
+    # Terminal stage of a one-click Full Audit: auto-generate the report.
+    ("auto_report", "report", ["risk"]),
 ]
 
 TERMINAL_STEP_STATES = {
@@ -130,6 +144,7 @@ def start_scan(
                 "authorization",
                 "correlation",
                 "risk",
+                "auto_report",
             )
         ):
             continue

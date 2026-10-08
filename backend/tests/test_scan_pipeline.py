@@ -93,6 +93,37 @@ def test_report_generation_formats(client, admin_headers, mock_wp):
         assert dl.status_code == 200 and len(dl.content) > 0
 
 
+def test_new_tool_steps_present_and_skip_gracefully(client, admin_headers, mock_wp):
+    _tid, scan = _run_scan(client, admin_headers)
+    detail = client.get(f"/scans/{scan['id']}", headers=admin_headers).json()
+    by_name = {s["name"]: s for s in detail["steps"]}
+    # The additional scanners are wired into the one-click pipeline...
+    for name in ("whatweb", "nikto", "ffuf", "semgrep", "burp"):
+        assert name in by_name, f"{name} step missing from pipeline"
+    # ...and never *fail* (binary-gated steps either run or skip; the pipeline
+    # must stay green whether or not a tool is installed on the worker).
+    for name in ("whatweb", "nikto", "ffuf", "semgrep", "burp"):
+        assert by_name[name]["status"] in ("skipped", "completed"), by_name[name]
+    # These skip deterministically in the test env (no source tree / no Burp
+    # configured) regardless of whether the binaries happen to be installed.
+    assert by_name["semgrep"]["status"] == "skipped"
+    assert by_name["burp"]["status"] == "skipped"
+    assert "zap" in by_name["burp"]["error"].lower()  # ZAP is the free default
+
+
+def test_full_audit_autogenerates_report(client, admin_headers, mock_wp):
+    tid, scan = _run_scan(client, admin_headers)
+    # The terminal auto_report step ran as part of the one-click audit.
+    detail = client.get(f"/scans/{scan['id']}", headers=admin_headers).json()
+    by_name = {s["name"]: s for s in detail["steps"]}
+    assert by_name["auto_report"]["status"] == "completed"
+    reports = client.get(f"/reports?target_id={tid}", headers=admin_headers).json()
+    auto = [r for r in reports if r["scan_id"] == scan["id"] and r["status"] == "ready"]
+    assert auto, "a report should be generated automatically by the one-click audit"
+    dl = client.get(f"/reports/{auto[0]['id']}/download", headers=admin_headers)
+    assert dl.status_code == 200 and len(dl.content) > 0
+
+
 def test_rescan_and_dedup(client, admin_headers, mock_wp):
     tid, scan = _run_scan(client, admin_headers)
     first = client.get(f"/findings?target_id={tid}", headers=admin_headers).json()

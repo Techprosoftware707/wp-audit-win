@@ -48,6 +48,31 @@ RUN ( curl -fsSL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/w
 RUN ( gem install wpscan --no-document && echo "wpscan installed" ) \
     || echo "WARN: wpscan install failed; wpscan step will report unavailable at runtime"
 
+# whatweb (ruby gem). Technology/server fingerprinting.
+RUN ( gem install whatweb --no-document && echo "whatweb installed" ) \
+    || echo "WARN: whatweb install failed; whatweb step will report unavailable at runtime"
+
+# nikto (from source; Debian's packaged 2.1.5 emits a legacy JSON schema).
+RUN ( git clone --depth 1 https://github.com/sullo/nikto /opt/nikto \
+      && printf '#!/bin/sh\nexec perl /opt/nikto/program/nikto.pl "$@"\n' > /usr/local/bin/nikto \
+      && chmod +x /usr/local/bin/nikto \
+      && echo "nikto installed" ) \
+    || echo "WARN: nikto install failed; nikto step will report unavailable at runtime"
+
+# ffuf (single Go binary from the official release).
+RUN set -eux; \
+    ffuf_ver=2.1.0; arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) a=amd64;; arm64) a=arm64;; *) a=amd64;; esac; \
+    ( curl -fsSL "https://github.com/ffuf/ffuf/releases/download/v${ffuf_ver}/ffuf_${ffuf_ver}_linux_${a}.tar.gz" -o /tmp/ffuf.tgz \
+      && tar -xzf /tmp/ffuf.tgz -C /usr/local/bin ffuf \
+      && chmod +x /usr/local/bin/ffuf && rm -f /tmp/ffuf.tgz \
+      && echo "ffuf installed" ) \
+    || echo "WARN: ffuf install failed; ffuf step will report unavailable at runtime"
+
+# semgrep (static analysis of PHP/plugin/theme source).
+RUN ( pip install --no-cache-dir semgrep && echo "semgrep installed" ) \
+    || echo "WARN: semgrep install failed; semgrep step will report unavailable at runtime"
+
 # Python app + deps.
 COPY pyproject.toml ./
 COPY app ./app

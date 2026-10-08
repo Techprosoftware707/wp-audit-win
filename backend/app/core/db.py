@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -22,7 +22,7 @@ class Base(DeclarativeBase):
 def _make_engine():
     url = settings.database_url
     if url.startswith("sqlite"):
-        connect_args = {"check_same_thread": False}
+        connect_args = {"check_same_thread": False, "timeout": 30}
         if url.endswith("://"):
             # In-memory: one shared connection for the whole process (tests).
             return create_engine(
@@ -36,6 +36,21 @@ def _make_engine():
 
 
 engine = _make_engine()
+
+
+if engine.url.get_backend_name() == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # pragma: no cover - driver glue
+        """WAL + busy_timeout so a worker and the API can share a file-backed
+        SQLite DB (dev) without 'database is locked' errors. No-op for :memory:."""
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cur.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 
 

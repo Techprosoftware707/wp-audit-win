@@ -17,7 +17,7 @@ from app.workers.parsers import wp
 
 def run(ctx: StepContext) -> dict:
     base = ctx.target.base_url.rstrip("/")
-    home = http.fetch(base)
+    home = http.fetch(base, scope=ctx.scope)
     if not home.ok:
         return {"skipped": True, "reason": f"base URL unreachable: {home.error}"}
 
@@ -29,7 +29,7 @@ def run(ctx: StepContext) -> dict:
 
     # readme.html — version disclosure.
     readme_found = False
-    readme = http.fetch(f"{base}/readme.html")
+    readme = http.fetch(f"{base}/readme.html", scope=ctx.scope)
     if readme.ok and readme.status_code == 200 and "wordpress" in readme.text.lower():
         readme_found = True
         rv = wp.readme_version(readme.text)
@@ -51,7 +51,7 @@ def run(ctx: StepContext) -> dict:
 
     # REST API.
     rest_enabled = False
-    rest = http.fetch(f"{base}/wp-json/")
+    rest = http.fetch(f"{base}/wp-json/", scope=ctx.scope)
     if (
         rest.ok
         and rest.status_code == 200
@@ -60,7 +60,7 @@ def run(ctx: StepContext) -> dict:
         rest_enabled = True
         ctx.add_asset(AssetType.REST_ROUTE.value, f"{base}/wp-json/", meta={"status": 200})
 
-        users_resp = http.fetch(f"{base}/wp-json/wp/v2/users")
+        users_resp = http.fetch(f"{base}/wp-json/wp/v2/users", scope=ctx.scope)
         if users_resp.ok and users_resp.status_code == 200:
             try:
                 payload = json.loads(users_resp.text)
@@ -103,7 +103,7 @@ def run(ctx: StepContext) -> dict:
 
     # XML-RPC.
     xmlrpc_enabled = False
-    xr = http.fetch(f"{base}/xmlrpc.php")
+    xr = http.fetch(f"{base}/xmlrpc.php", scope=ctx.scope)
     if xr.ok and wp.xmlrpc_enabled(xr.status_code, xr.text):
         xmlrpc_enabled = True
         ctx.add_asset(AssetType.XMLRPC.value, f"{base}/xmlrpc.php", meta={"status": xr.status_code})
@@ -125,7 +125,7 @@ def run(ctx: StepContext) -> dict:
         f.confirmed = True
 
     # login URL / multisite hint.
-    login = http.fetch(f"{base}/wp-login.php")
+    login = http.fetch(f"{base}/wp-login.php", scope=ctx.scope)
     login_url = login.url if login.ok else ""
 
     # Record discovered components.

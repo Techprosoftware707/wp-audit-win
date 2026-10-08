@@ -4,7 +4,17 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, uuid_pk
@@ -44,6 +54,11 @@ class Finding(Base, TimestampMixin):
     """An issue discovered on a specific target (deduplicated across scanners)."""
 
     __tablename__ = "findings"
+    # Enforce one finding per (target, dedup signature); add_finding() handles the
+    # resulting IntegrityError by merging the concurrent detector.
+    __table_args__ = (
+        UniqueConstraint("target_id", "dedup_key", name="uq_finding_target_dedup"),
+    )
 
     id: Mapped[str] = uuid_pk()
     finding_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
@@ -101,8 +116,12 @@ class Evidence(Base, TimestampMixin):
     finding_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("findings.id", ondelete="CASCADE"), index=True, nullable=True
     )
-    scan_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
-    target_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    scan_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("scans.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    target_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("targets.id", ondelete="CASCADE"), index=True, nullable=True
+    )
 
     kind: Mapped[str] = mapped_column(String(32), default="request_response")
     scanner: Mapped[str] = mapped_column(String(64), default="")

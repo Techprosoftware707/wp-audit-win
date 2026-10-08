@@ -34,6 +34,12 @@ x-common-env: &common-env
   MINIO_SECURE: ${MINIO_SECURE:-false}
   ZAP_HOST: zap
   ZAP_PORT: "8090"
+  ZAP_API_KEY: ${ZAP_API_KEY:-}
+  WPSEC_SOURCE_DIR: ${WPSEC_SOURCE_DIR:-}
+  WPSEC_FFUF_WORDLIST: ${WPSEC_FFUF_WORDLIST:-}
+  BURP_API_URL: ${BURP_API_URL:-}
+  BURP_API_KEY: ${BURP_API_KEY:-}
+  WPSEC_AUTO_REPORT_FORMAT: ${WPSEC_AUTO_REPORT_FORMAT:-html}
   WPSCAN_API_TOKEN: ${WPSCAN_API_TOKEN:-}
   NVD_API_KEY: ${NVD_API_KEY:-}
 
@@ -94,6 +100,10 @@ services:
     command: ["api"]
     environment:
       <<: *common-env
+      # The api entrypoint bootstraps the initial admin on first run; these must
+      # reach the container so the installer-provided password is the one used.
+      WPSEC_ADMIN_EMAIL: ${WPSEC_ADMIN_EMAIL:-admin@example.com}
+      WPSEC_ADMIN_PASSWORD: ${WPSEC_ADMIN_PASSWORD:?set WPSEC_ADMIN_PASSWORD in .env}
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -172,7 +182,7 @@ services:
     profiles: ["scanners"]
     command: >
       zap.sh -daemon -host 0.0.0.0 -port 8090
-      -config api.disablekey=false -config api.key=${WPSEC_SECRET_KEY}
+      -config api.disablekey=false -config api.key=${ZAP_API_KEY:-${WPSEC_SECRET_KEY}}
       -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true
     networks: [scanner]
     # ZAP only reachable from scanner workers, never from the control plane.

@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     # --- scanner engines ---
     zap_host: str = Field("zap", alias="ZAP_HOST")
     zap_port: int = Field(8090, alias="ZAP_PORT")
+    # Dedicated ZAP API key (NOT the JWT secret). install.sh generates one.
+    zap_api_key: str = Field("", alias="ZAP_API_KEY")
     wpscan_api_token: str = Field("", alias="WPSCAN_API_TOKEN")
     nvd_api_key: str = Field("", alias="NVD_API_KEY")
 

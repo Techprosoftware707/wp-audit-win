@@ -27,7 +27,11 @@ def uuid_pk() -> Mapped[str]:
 
 class TimestampMixin:
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        default=utcnow,
+        server_default=func.now(),
+        nullable=False,
+        index=True,  # list endpoints order by created_at DESC
     )
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True),

@@ -38,7 +38,7 @@ def run(ctx: StepContext) -> dict:
 
     ctx.add_asset(AssetType.HOST.value, host, meta={"addresses": resolved, "scheme": parsed.scheme})
 
-    resp = http.fetch(base)
+    resp = http.fetch(base, scope=ctx.scope)
     if not resp.ok:
         ctx.add_evidence(
             kind="http",

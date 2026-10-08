@@ -69,6 +69,7 @@ if [ ! -f .env ]; then
   sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(gen 24 | tr -d '/+=' )|" .env
   sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$(gen 24 | tr -d '/+=' )|" .env
   sed -i "s|^MINIO_ROOT_PASSWORD=.*|MINIO_ROOT_PASSWORD=$(gen 24 | tr -d '/+=' )|" .env
+  sed -i "s|^ZAP_API_KEY=.*|ZAP_API_KEY=$(gen 24 | tr -d '/+=' )|" .env
   sed -i "s|^WPSEC_ADMIN_PASSWORD=.*|WPSEC_ADMIN_PASSWORD=${ADMIN_PW}|" .env
   chmod 600 .env
 else

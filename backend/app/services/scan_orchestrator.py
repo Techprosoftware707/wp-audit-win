@@ -19,7 +19,7 @@ from app.models.base import utcnow
 from app.models.enums import ScanMode, ScanStatus, Severity, StepStatus
 from app.models.scan import Scan, ScanStep
 from app.models.system import Worker
-from app.models.target import Target
+from app.models.target import Authorization, Target
 from app.models.user import User
 from app.services import authorization as authz
 
@@ -77,6 +77,18 @@ def _intensity_rank(name: str) -> int:
         return INTENSITY_ORDER.index(name.lower())
     except ValueError:
         return INTENSITY_ORDER.index("safe")
+
+
+def _scan_scope(db: Session, scan: Scan, target: Target) -> list[str]:
+    """The authorization's allowed scope for this scan (falls back to the host).
+
+    Passed to target-facing HTTP so redirects/verification cannot leave scope.
+    """
+    if scan.authorization_id:
+        auth = db.get(Authorization, scan.authorization_id)
+        if auth and auth.allowed_scope:
+            return list(auth.allowed_scope)
+    return [target.host]
 
 
 def effective_intensity(requested: str, target: Target, auth) -> str:
@@ -178,7 +190,19 @@ def _steps(db: Session, scan: Scan) -> list[ScanStep]:
     )
 
 
+# Steps whose FAILURE must abort the whole scan (safety gates). The
+# authorization step re-checks authorization at execution time; if it fails, no
+# downstream step may run against the (now unauthorized) target.
+CRITICAL_STEPS = {"authorization"}
+
+
 def _ready_steps(steps: list[ScanStep]) -> list[ScanStep]:
+    """PENDING steps whose every dependency has reached a terminal state.
+
+    A terminal dependency (completed / skipped / failed) satisfies the edge, so an
+    ordinary leaf-scanner failure does not block correlation/report. A failed
+    CRITICAL step is handled separately by :func:`_abort_if_critical_failed`,
+    which runs first and prevents any dependent from becoming ready."""
     done = {s.name for s in steps if s.status in TERMINAL_STEP_STATES}
     ready = []
     for s in steps:
@@ -189,13 +213,38 @@ def _ready_steps(steps: list[ScanStep]) -> list[ScanStep]:
     return ready
 
 
+def _abort_if_critical_failed(db: Session, scan: Scan, steps: list[ScanStep]) -> bool:
+    """If a CRITICAL step failed, skip every not-yet-terminal step (aborting the
+    scan) and return True. This is the control that halts all scanning when the
+    run-time authorization re-check fails."""
+    failed_crit = [s.name for s in steps if s.name in CRITICAL_STEPS
+                   and s.status == StepStatus.FAILED.value]
+    if not failed_crit:
+        return False
+    changed = False
+    for s in steps:
+        if s.status in (StepStatus.PENDING.value, StepStatus.QUEUED.value):
+            s.status = StepStatus.SKIPPED.value
+            s.error = f"aborted: critical step failed ({', '.join(failed_crit)})"
+            s.finished_at = utcnow()
+            db.add(s)
+            changed = True
+    return changed
+
+
 def enqueue_ready(db: Session, scan: Scan) -> None:
-    """Enqueue ready steps to their queues; skip steps with no capable worker."""
+    """Enqueue ready steps to their queues; skip steps with no capable worker.
+
+    The step's QUEUED status is COMMITTED before the Redis job is pushed, so a
+    consumer that pops the job immediately always sees the row (no lost job)."""
     queue = get_queue()
     changed = True
     while changed:
         changed = False
         steps = _steps(db, scan)
+        if _abort_if_critical_failed(db, scan, steps):
+            db.commit()
+            break
         for step in _ready_steps(steps):
             if not queue_has_worker(db, step.queue):
                 step.status = StepStatus.SKIPPED.value
@@ -205,8 +254,11 @@ def enqueue_ready(db: Session, scan: Scan) -> None:
                 changed = True
                 continue
             step.status = StepStatus.QUEUED.value
+            step.started_at = None
             db.add(step)
-            db.flush()
+            # Commit BEFORE enqueue so the row is visible to any worker that
+            # pops the job (fixes enqueue-before-commit job loss).
+            db.commit()
             queue.enqueue(
                 step.queue,
                 {
@@ -215,7 +267,7 @@ def enqueue_ready(db: Session, scan: Scan) -> None:
                     "step_name": step.name,
                 },
             )
-    db.flush()
+    db.commit()
     _maybe_finalize(db, scan)
 
 
@@ -229,6 +281,16 @@ def run_step(db: Session, step_id: str) -> None:
         return
     scan = db.get(Scan, step.scan_id)
     target = db.get(Target, scan.target_id)
+
+    # Respect cancellation: a worker may pop a queued job after the scan was
+    # cancelled — do not run it against the target.
+    if scan.status == ScanStatus.CANCELLED.value:
+        step.status = StepStatus.SKIPPED.value
+        step.error = "cancelled"
+        step.finished_at = utcnow()
+        db.add(step)
+        db.flush()
+        return
 
     step.status = StepStatus.RUNNING.value
     step.started_at = utcnow()
@@ -248,6 +310,7 @@ def run_step(db: Session, step_id: str) -> None:
                 target=target,
                 step_name=step.name,
                 intensity=scan.effective_intensity,
+                scope=_scan_scope(db, scan, target),
             )
             summary = fn(ctx) or {}
             step.output_summary = summary
@@ -277,6 +340,9 @@ def execute_scan_inline(db: Session, scan: Scan) -> None:
         if guard > 500:  # safety against a malformed DAG
             break
         steps = _steps(db, scan)
+        if _abort_if_critical_failed(db, scan, steps):
+            db.flush()
+            break
         ready = _ready_steps(steps)
         if not ready:
             break
@@ -291,6 +357,9 @@ def advance(db: Session, scan: Scan) -> None:
 
 
 def _maybe_finalize(db: Session, scan: Scan) -> None:
+    # A cancelled scan is terminal; never resurrect it to completed/failed.
+    if scan.status == ScanStatus.CANCELLED.value:
+        return
     steps = _steps(db, scan)
     if not steps:
         return

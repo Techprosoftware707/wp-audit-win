@@ -9,9 +9,10 @@ step stays small and focused on *detection*.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from sqlalchemy import func, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -26,12 +27,23 @@ from app.services import risk as risk_service
 
 
 def next_finding_code(db: Session) -> str:
+    """Next FIND-YYYY-NNNNNN code for the year.
+
+    Uses MAX(existing numeric suffix)+1, not COUNT — correlation deletes merged
+    findings, so a count-based scheme would reuse a code and collide with the
+    unique constraint. add_finding() additionally retries on the rare race."""
     year = utcnow().year
     prefix = f"FIND-{year}-"
-    count = db.execute(
-        select(func.count(Finding.id)).where(Finding.finding_code.like(prefix + "%"))
-    ).scalar_one()
-    return f"{prefix}{count + 1:06d}"
+    rows = db.execute(
+        select(Finding.finding_code).where(Finding.finding_code.like(prefix + "%"))
+    ).scalars().all()
+    max_n = 0
+    plen = len(prefix)
+    for code in rows:
+        tail = code[plen:]
+        if tail.isdigit():
+            max_n = max(max_n, int(tail))
+    return f"{prefix}{max_n + 1:06d}"
 
 
 @dataclass
@@ -41,6 +53,7 @@ class StepContext:
     target: Target
     step_name: str
     intensity: str
+    scope: list[str] = field(default_factory=list)
     logger: object = None
 
     def __post_init__(self) -> None:
@@ -203,52 +216,46 @@ class StepContext:
     ) -> Finding:
         """Create or merge a finding, applying incremental correlation + risk."""
         now = utcnow()
-        existing = self.db.execute(
+        finding = self.db.execute(
             select(Finding).where(
                 Finding.target_id == self.target.id, Finding.dedup_key == dedup_key
             )
         ).scalar_one_or_none()
 
-        if existing:
-            detectors = list(existing.detectors or [])
-            if detector not in detectors:
-                detectors.append(detector)
-            existing.detectors = detectors
-            existing.detector_count = len(detectors)
-            existing.last_detected_at = now
-            existing.scan_id = self.scan.id
-            # Escalate severity to the strongest observation.
-            if SEVERITY_RANK.get(Severity(severity), 0) > SEVERITY_RANK.get(
-                Severity(existing.severity), 0
-            ):
-                existing.severity = severity
-            if cve and not existing.cve:
-                existing.cve = cve
-            if cwe and not existing.cwe:
-                existing.cwe = cwe
-            finding = existing
-        else:
-            finding = Finding(
-                finding_code=next_finding_code(self.db),
-                target_id=self.target.id,
-                scan_id=self.scan.id,
-                vulnerability_id=vulnerability_id,
+        newly_created = False
+        if finding is None:
+            finding, newly_created = self._insert_finding(
+                now,
+                detector=detector,
                 title=title,
                 description=description,
                 severity=severity,
                 cve=cve,
                 cwe=cwe,
                 affected_asset=affected_asset,
+                vulnerability_id=vulnerability_id,
                 verification_status=verification_status,
-                detectors=[detector],
-                detector_count=1,
-                dedup_key=dedup_key,
                 remediation=remediation,
-                first_detected_at=now,
-                last_detected_at=now,
+                dedup_key=dedup_key,
             )
-            self.db.add(finding)
-            self.db.flush()
+
+        if not newly_created:
+            # Existing finding or a concurrent race-winner: merge this detection.
+            detectors = list(finding.detectors or [])
+            if detector not in detectors:
+                detectors.append(detector)
+            finding.detectors = detectors
+            finding.detector_count = len(detectors)
+            finding.last_detected_at = now
+            finding.scan_id = self.scan.id
+            if SEVERITY_RANK.get(Severity(severity), 0) > SEVERITY_RANK.get(
+                Severity(finding.severity), 0
+            ):
+                finding.severity = severity
+            if cve and not finding.cve:
+                finding.cve = cve
+            if cwe and not finding.cwe:
+                finding.cwe = cwe
 
         # (Re)compute risk.
         risk_inputs = risk_service.RiskInputs(
@@ -266,6 +273,45 @@ class StepContext:
         finding.risk_level = level
         finding.risk_factors = factors
         return finding
+
+    def _insert_finding(self, now, *, detector: str, **fields) -> tuple[Finding, bool]:
+        """Insert a new Finding, retrying on a unique-constraint collision.
+
+        Returns (finding, created). A concurrent detector may win the
+        (target_id, dedup_key) race or a finding_code may collide; both surface
+        as IntegrityError, which we handle inside a SAVEPOINT so prior work in
+        this step is preserved. On a dedup race we return the existing winner."""
+        for _ in range(6):
+            candidate = Finding(
+                finding_code=next_finding_code(self.db),
+                target_id=self.target.id,
+                scan_id=self.scan.id,
+                detectors=[detector],
+                detector_count=1,
+                first_detected_at=now,
+                last_detected_at=now,
+                **fields,
+            )
+            try:
+                with self.db.begin_nested():
+                    self.db.add(candidate)
+                    self.db.flush()
+                return candidate, True
+            except IntegrityError:
+                try:
+                    self.db.expunge(candidate)
+                except Exception:  # noqa: BLE001
+                    pass
+                winner = self.db.execute(
+                    select(Finding).where(
+                        Finding.target_id == self.target.id,
+                        Finding.dedup_key == fields["dedup_key"],
+                    )
+                ).scalar_one_or_none()
+                if winner is not None:
+                    return winner, False
+                # finding_code collision only — loop to regenerate a code.
+        raise RuntimeError("could not allocate a unique finding_code after retries")
 
     def add_evidence(self, finding: Finding | None = None, **kwargs) -> Evidence:
         return evidence_service.store(

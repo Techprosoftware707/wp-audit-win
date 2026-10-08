@@ -22,7 +22,7 @@ def _zap_url(path: str) -> str:
 
 
 def _call(client: httpx.Client, path: str, **params) -> dict | None:
-    params.setdefault("apikey", settings.secret_key)
+    params.setdefault("apikey", settings.zap_api_key or settings.secret_key)
     try:
         r = client.get(_zap_url(path), params=params, timeout=30)
         if r.status_code == 200:

@@ -1,0 +1,42 @@
+# A disposable, intentionally-testable WordPress target you fully control.
+# For integration testing of wp-audit-win against a real WordPress install.
+#
+#   docker compose -f samples/docker-compose.labtarget.yml up -d
+#   # target is at http://localhost:8081
+#
+# This is a throwaway environment: do not expose it to the internet or store
+# anything real in it.
+services:
+  labtarget-db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: labroot
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp
+    volumes:
+      - labtarget_db:/var/lib/mysql
+    networks: [labtarget]
+
+  labtarget-wp:
+    image: wordpress:6.4-php8.2-apache
+    depends_on: [labtarget-db]
+    ports:
+      - "127.0.0.1:8081:80"   # bound to localhost only
+    environment:
+      WORDPRESS_DB_HOST: labtarget-db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      - labtarget_wp:/var/www/html
+    networks: [labtarget]
+
+volumes:
+  labtarget_db:
+  labtarget_wp:
+
+networks:
+  labtarget:
+    driver: bridge

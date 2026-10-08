@@ -78,6 +78,18 @@ class Settings(BaseSettings):
     wpscan_api_token: str = Field("", alias="WPSCAN_API_TOKEN")
     nvd_api_key: str = Field("", alias="NVD_API_KEY")
 
+    # Static analysis (Semgrep) source root, content-discovery (ffuf) wordlist.
+    source_dir: str = Field("", alias="WPSEC_SOURCE_DIR")
+    ffuf_wordlist: str = Field("", alias="WPSEC_FFUF_WORDLIST")
+
+    # Optional, operator-provided Burp Suite REST API (commercial). OWASP ZAP is
+    # the free default already integrated; leave blank to use ZAP only.
+    burp_api_url: str = Field("", alias="BURP_API_URL")
+    burp_api_key: str = Field("", alias="BURP_API_KEY")
+
+    # One-click Full Audit: auto-generate a report when a scan finishes.
+    auto_report_format: str = Field("html", alias="WPSEC_AUTO_REPORT_FORMAT")
+
     # ------------------------------------------------------------------ helpers
     @property
     def is_production(self) -> bool:

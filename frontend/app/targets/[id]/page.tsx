@@ -69,8 +69,21 @@ export default function TargetDetail() {
         method: "POST",
         body: JSON.stringify({ profile: target?.scan_profile || "standard", mode: "production" }),
       });
-      setMsg(`Scan ${scan.id.slice(0, 8)} ${scan.status}.`);
+      setMsg(`Scan ${scan.id.slice(0, 8)} ${scan.status}. A report is generated automatically.`);
       await load();
+      // One-click: open the auto-generated report for this scan if it's ready.
+      try {
+        const reps: any[] = await api(`/reports?target_id=${id}`);
+        const rep = reps.find((r) => r.scan_id === scan.id && r.status === "ready");
+        if (rep) {
+          window.open(
+            `${process.env.NEXT_PUBLIC_API_BASE || "/api"}/reports/${rep.id}/download`,
+            "_blank",
+          );
+        }
+      } catch {
+        /* report may still be generating on a worker; the scan row has a Report button */
+      }
     } catch (e: any) {
       setMsg(e.message);
     } finally {

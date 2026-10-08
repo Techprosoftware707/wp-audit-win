@@ -112,7 +112,7 @@ services:
     environment:
       <<: *common-env
       WPSEC_WORKER_NAME: worker-general
-      WPSEC_WORKER_QUEUES: "default,fingerprint,nmap,nuclei,correlation,poc,report"
+      WPSEC_WORKER_QUEUES: "default,fingerprint,nmap,nuclei,whatweb,nikto,ffuf,semgrep,burp,correlation,poc,report"
       WPSEC_WORKER_CONCURRENCY: ${WPSEC_WORKER_CONCURRENCY:-2}
     depends_on:
       postgres: {condition: service_healthy}

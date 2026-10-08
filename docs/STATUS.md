@@ -53,6 +53,24 @@ available, so the base stack always completes a scan. Install them via the
   rotating `WPSEC_CREDENTIAL_KEY`.
 - **Prometheus/Grafana/Loki** — worker/API metrics are exposed in the DB and API;
   wiring a metrics exporter + dashboards is a documented add-on.
+- **Change detection** — the `change_events` table and `GET /targets/{id}/changes`
+  endpoint exist; the scan-diff step that populates them by comparing consecutive
+  scans (new/removed/updated plugins, version/core changes, new endpoints) is a
+  documented add-on.
+- **Frontend breadth** — the dashboard covers the full core workflow (login →
+  dashboard → targets → authorize → Full Audit → findings → report). The REST API
+  and `wpsec` CLI expose every entity; dedicated UI pages for Evidence,
+  Credentials, Schedules, Lab, Audit Log and Settings are thin wrappers to add on
+  top of existing endpoints.
+
+## Build/run environment note
+
+The code was validated with the native toolchain (Python venv for the backend —
+36 tests + end-to-end API via TestClient; `npm run build` for the frontend) and
+`docker compose config` for all profiles. Live `docker build` / `docker compose
+up` were not exercised in the authoring sandbox because it had no Docker daemon;
+the Dockerfiles and compose files are structurally valid and install the same
+pinned dependencies verified in the venv/npm builds.
 
 ## Not built (by design)
 

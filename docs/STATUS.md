@@ -13,79 +13,89 @@ placeholder.
   append-only audit, Redis/in-process job queue.
 - REST API (58 paths) with OpenAPI docs; `wpsec` CLI.
 - **Authorization gate** enforced server-side (unit-tested): time window + scope
-  + status, with intensity clamping.
-- Scan orchestration (DAG executor), worker runtime with heartbeats.
-- Steps: `authorization`, `discovery`, `wp_fingerprint` (dependency-free, real),
-  `correlation`, `poc_match`, `risk` — all run in the base stack.
-- Finding correlation/dedup, CVSS-aware risk engine, evidence engine
-  (MinIO + inline fallback), reporting (HTML/JSON/CSV/Markdown; PDF via optional
-  weasyprint).
+  + status, with intensity clamping. A run-time re-check failure **aborts** the
+  scan before any scanner runs.
+- Scan orchestration (DAG executor, 19-step one-click pipeline), worker runtime
+  with heartbeats, a **scheduler** that fires due schedules, and a **reaper** that
+  self-heals stuck/lost jobs. Identical inline (dev/test) and distributed
+  (Redis + worker) execution — both verified end-to-end over real HTTP against a
+  live target with the real `whatweb` binary.
+- Steps (always run in the base stack): `authorization`, `discovery`,
+  `wp_fingerprint` (dependency-free, real), `correlation`, `poc_match`,
+  `change_detect` (diffs inventory vs the previous scan into `change_events`),
+  `risk`, `auto_report`.
+- Finding correlation/dedup (unique `(target,dedup_key)` + merge-on-conflict),
+  CVSS-aware risk engine, evidence engine (MinIO with bounded-timeout +
+  negative-cache fallback to inline), reporting (HTML/JSON/CSV/Markdown with
+  autoescaping; PDF via optional weasyprint).
 - Verification engine: `version_match`, `endpoint_presence`, `info_exposure`
-  fully functional; active methods gated by approval.
-- PoC/vulnerability intelligence: catalog, matching, and the CISA-KEV + NVD
-  collector.
-- Next.js dashboard: login, dashboard, targets (+add), target detail (authorize,
-  Full Audit, findings, inventory, report), scans, findings, PoC library,
+  fully functional and scope-confined; active methods approval-gated.
+- Vulnerability intelligence: catalog + matching + collectors for **NVD, CISA
+  KEV, OSV, and the GitHub Advisory Database**, plus registered **WPScan /
+  WordPress.org / vendor** sources. Background sync via the worker maintenance
+  loop; KEV is distinguished from merely-published.
+- Next.js dashboard: login, dashboard, targets (+add, authorize, one-click Full
+  Audit), **scan detail (live stages + Stop + JSON/CSV/HTML export, failed stages
+  surfaced)**, **finding detail (evidence, CVE link, remediation, safe
+  verification, status/retest workflow)**, findings (filters), PoC library,
   workers.
-- 36-test pytest suite (hermetic: SQLite + in-process queue + mocked HTTP).
+- Security hardening from the audit: SSRF/scope guard on all target HTTP (manual
+  redirect validation), X-Forwarded-For trusted only from configured proxies,
+  per-account + per-IP login throttling, no-shell subprocesses (WP-CLI path
+  quoted), SSH host-key verification by default, secret redaction (incl. Gitleaks),
+  commit-before-enqueue job durability.
+- Test suite: 96 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
+  plus two end-to-end harnesses (real-HTTP inline, and Redis + worker distributed).
 
 ## Degrades gracefully (works when the tool/engine is present)
 
-These steps **skip with a recorded reason** when their binary/engine is not
-available, so the base stack always completes a scan. Install them via the
+These steps **skip with a recorded reason** when their binary/engine/config is
+not available, so the base stack always completes a scan. Install them via the
 `scanners` compose profile (the worker image bundles the tools):
 
-- `nmap` — needs the `nmap` binary.
-- `nuclei` — needs the `nuclei` binary (worker image fetches it).
-- `wpscan` — needs the `wpscan` gem; works without an API token.
+- `nmap`, `nuclei`, `wpscan`, `whatweb`, `nikto`, `ffuf` — need their binaries
+  (the worker image installs each resiliently; a failed install self-skips).
 - `zap` — needs the ZAP daemon (the `zap` service, `scanners` profile).
-- `wpcli` — needs an SSH credential on the target **and** `paramiko` on the
-  worker; otherwise it skips.
-- `whatweb` — needs the `whatweb` gem; technology/server fingerprinting.
-- `nikto` — needs the `nikto` binary (worker image installs 2.5.x from source).
-- `ffuf` — needs the `ffuf` binary; uses `WPSEC_FFUF_WORDLIST` or the bundled
-  WordPress wordlist; active content discovery (intensity `standard`+).
-- `semgrep` — needs the `semgrep` binary **and** a source tree
-  (`WPSEC_SOURCE_DIR`); static analysis of PHP/plugin/theme source.
-- `burp` — **optional, commercial**: skips unless `BURP_API_URL` is set; drives a
-  scan via the Burp Suite REST API. OWASP ZAP is the free default.
+- `semgrep` / `gitleaks` — static source analysis; need the binary **and** a
+  source tree (`WPSEC_SOURCE_DIR`). Gitleaks redacts any secret it finds.
+- `wpcli` — needs an SSH credential on the target **and** `paramiko`.
+- `burp` — **optional, commercial**: skips unless `BURP_API_URL` is set. OWASP
+  ZAP is the built-in free default for deep web testing.
 
-The one-click **Full Audit** pipeline runs all of the above automatically and ends
-with an `auto_report` step that generates a downloadable report — a single click
-produces the deliverable. Every step still runs only after the authorization gate
-passes.
+The one-click **Full Audit** runs all of the above automatically and ends with an
+`auto_report` step that generates a downloadable report. Every step runs only
+after the authorization gate passes.
 
 ## Explicit extension points (architected, opt-in)
 
 - **Lab `docker` provider** — the `record` provider is the default and fully
   wired; launching real disposable WordPress containers runs on the lab worker
-  and is opt-in (see [LAB.md](LAB.md)).
-- **Scheduler daemon** — schedules are stored with `next_run_at`; a periodic
-  runner that fires due scans is a small cron-style loop to add next.
+  and is opt-in (see [LAB.md](LAB.md)). This is where aggressive exploit
+  reproduction belongs — operator-driven, isolated, never against live targets.
+- **Cron-precise schedules** — interval presets (hourly/6h/daily/weekly/monthly)
+  fire exactly; a raw cron string is currently advanced hourly (a full cron
+  parser is an optional dependency).
 - **Credential-key rotation helper** — re-encrypt existing ciphertext after
   rotating `WPSEC_CREDENTIAL_KEY`.
-- **Prometheus/Grafana/Loki** — worker/API metrics are exposed in the DB and API;
-  wiring a metrics exporter + dashboards is a documented add-on.
-- **Change detection** — the `change_events` table and `GET /targets/{id}/changes`
-  endpoint exist; the scan-diff step that populates them by comparing consecutive
-  scans (new/removed/updated plugins, version/core changes, new endpoints) is a
-  documented add-on.
-- **Frontend breadth** — the dashboard covers the full core workflow (login →
-  dashboard → targets → authorize → Full Audit → findings → report). The REST API
-  and `wpsec` CLI expose every entity; dedicated UI pages for Evidence,
-  Credentials, Schedules, Lab, Audit Log and Settings are thin wrappers to add on
-  top of existing endpoints.
+- **Prometheus/Grafana/Loki** — worker/API health is exposed in the DB and API;
+  wiring an exporter + dashboards is a documented add-on.
+- **Extra dashboard pages** — Evidence/Credentials/Schedules/Lab/Audit/Settings
+  are fully served by the REST API + `wpsec` CLI; dedicated UI pages beyond the
+  core workflow are thin wrappers to add on top.
 
 ## Build/run environment note
 
-The code was validated with the native toolchain (Python venv for the backend —
-36 tests + end-to-end API via TestClient; `npm run build` for the frontend) and
+Validated with the native toolchain: 96 backend tests, end-to-end over real HTTP
+(inline **and** Redis + worker distributed, using the real `whatweb` binary), and
 `docker compose config` for all profiles. Live `docker build` / `docker compose
-up` were not exercised in the authoring sandbox because it had no Docker daemon;
-the Dockerfiles and compose files are structurally valid and install the same
-pinned dependencies verified in the venv/npm builds.
+up` were not exercised in the authoring sandbox (no Docker daemon); the
+Dockerfiles/compose are structurally valid and install the same pinned
+dependencies verified in the venv/npm builds.
 
 ## Not built (by design)
 
-Stealth, evasion, persistence, credential theft, destructive payloads, and any
-unrestricted "scan arbitrary site" path. See [SECURITY.md](SECURITY.md).
+Autonomous compromise of real targets, exploit-created admin accounts, credential/
+session theft, automatic privilege escalation to host root, stealth, evasion,
+persistence, destructive payloads, and any unrestricted "scan arbitrary site"
+path. Aggressive exploit reproduction is confined to the isolated lab and is
+operator-approved. See [SECURITY.md](SECURITY.md) and [VERIFICATION.md](VERIFICATION.md).

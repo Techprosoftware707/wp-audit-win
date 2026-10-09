@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 
 export default function PocsPage() {
   const [pocs, setPocs] = useState<any[]>([]);
@@ -29,13 +29,38 @@ export default function PocsPage() {
     }
   }
 
+  async function collect() {
+    setBusy(true);
+    setMsg("");
+    try {
+      const res: any = await api("/pocs/collect", {
+        method: "POST",
+        body: JSON.stringify({ only_uncollected: true, limit: 100 }),
+      });
+      setMsg(
+        `Collected ${res.collected}/${res.requested} artifact(s) — downloaded, hashed, ` +
+          `and statically classified. Nothing was executed; all stay UNVERIFIED.`,
+      );
+      load();
+    } catch (e: any) {
+      setMsg(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Exploit / PoC Intelligence</h1>
-        <button className="btn" onClick={sync} disabled={busy}>
-          {busy ? "Syncing…" : "Sync sources"}
-        </button>
+        <div className="flex gap-2">
+          <button className="btn-ghost" onClick={collect} disabled={busy}>
+            {busy ? "Working…" : "Collect artifacts"}
+          </button>
+          <button className="btn" onClick={sync} disabled={busy}>
+            {busy ? "Syncing…" : "Sync sources"}
+          </button>
+        </div>
       </div>
       <div className="mb-3 text-sm text-slate-400">
         Local intelligence library. Records are metadata about publicly known
@@ -63,6 +88,7 @@ export default function PocsPage() {
               <th className="th">Affected</th>
               <th className="th">Maturity</th>
               <th className="th">Safety</th>
+              <th className="th">Artifact</th>
             </tr>
           </thead>
           <tbody>
@@ -76,11 +102,26 @@ export default function PocsPage() {
                 </td>
                 <td className="td text-xs">{p.maturity}</td>
                 <td className="td text-xs">{p.safety_classification}</td>
+                <td className="td text-xs">
+                  {p.artifact_sha256 ? (
+                    <button
+                      className="text-sky-400"
+                      title={`sha256 ${p.artifact_sha256}`}
+                      onClick={() =>
+                        downloadFile(`/pocs/${p.id}/artifact`, `${p.poc_code}.txt`)
+                      }
+                    >
+                      ⭳ {String(p.artifact_sha256).slice(0, 10)}…
+                    </button>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
               </tr>
             ))}
             {pocs.length === 0 && (
               <tr>
-                <td className="td text-slate-400" colSpan={6}>
+                <td className="td text-slate-400" colSpan={7}>
                   Library empty — click “Sync sources”.
                 </td>
               </tr>

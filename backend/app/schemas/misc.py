@@ -76,6 +76,14 @@ class PoCSyncRequest(BaseModel):
     sources: list[str] | None = None  # source names; None = all enabled
 
 
+class PoCCollectRequest(BaseModel):
+    """Batch artifact collection. Downloads + statically classifies; never runs."""
+
+    poc_ids: list[str] | None = None  # explicit ids; None = select by filter
+    only_uncollected: bool = True  # skip PoCs that already have an artifact
+    limit: int = Field(default=25, ge=1, le=200)
+
+
 class PoCSourceOut(ORMModel):
     id: str
     name: str

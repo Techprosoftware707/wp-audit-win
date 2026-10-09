@@ -279,6 +279,37 @@ def poc_update():
     console.print_json(data=data)
 
 
+@poc_app.command("collect")
+def poc_collect(
+    poc_id: str = typer.Argument(None, help="Collect one PoC; omit to batch uncollected"),
+    limit: int = typer.Option(25, "--limit"),
+):
+    """Download + statically classify PoC artifacts. Never executes them.
+
+    Artifacts are fetched (SSRF-guarded, size-capped), hashed, statically
+    inspected, classified by safety, and stored. Everything stays UNVERIFIED.
+    """
+    with _client() as c:
+        if poc_id:
+            data = _handle(c.post(f"/pocs/{poc_id}/collect"))
+            console.print_json(data=data)
+            return
+        data = _handle(
+            c.post("/pocs/collect", json={"only_uncollected": True, "limit": limit})
+        )
+    table = Table("Code", "Status", "Safety", "Lang", "SHA-256")
+    for r in data.get("results", []):
+        table.add_row(
+            r.get("poc_code", ""),
+            r.get("status", ""),
+            r.get("safety_classification", ""),
+            r.get("language", ""),
+            (r.get("sha256") or "")[:16],
+        )
+    console.print(table)
+    console.print(f"collected {data.get('collected', 0)}/{data.get('requested', 0)}")
+
+
 @poc_app.command("test")
 def poc_test(poc_id: str):
     """PoC testing is operator-driven in the isolated lab (see docs/LAB.md)."""

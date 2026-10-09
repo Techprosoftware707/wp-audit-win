@@ -49,6 +49,49 @@ handled gracefully (a source records its error and the sync continues).
 > and left UNVERIFIED and unexecuted; static inspection and any run happen only
 > in the isolated lab under operator control.
 
+## Artifact collection (download → hash → inspect → classify → store → index)
+
+`app/services/poc_collector.py` implements the artifact side of the workflow for
+PoC records that carry a `source_url`. It is deliberately **read-only with
+respect to the artifact**: it downloads bytes, hashes them, reads them as text,
+and pattern-matches markers — **there is no code path that runs, imports,
+compiles, or shells out to a collected artifact.**
+
+1. **Download (where permitted)** — `fetch_public()` fetches only `http(s)`
+   public URLs. Any host resolving to a private / loopback / link-local /
+   reserved address is refused (SSRF guard), every redirect hop is re-validated,
+   and the body is capped at 1 MiB.
+2. **Hash** — SHA-256 of the exact bytes (stored on the record and returned).
+3. **Static inspection** — `static_inspect()` is a pure function that classifies
+   the artifact's *potential* behaviour by scanning for markers and detects the
+   language. It is a heuristic to inform the operator, never a silently-trusted
+   execution gate.
+4. **Classify** — the **worst** class that matched wins:
+   `destructive` > `intrusive` > `active_benign` > `benign_check` > `unknown`.
+5. **Store** — bytes go to MinIO object storage (`pocs/<code>/<sha>.<ext>`) with
+   a local-disk fallback (`$WPSEC_DATA_DIR/pocs`) so an artifact is always
+   retained. The record's `maturity` advances to `static_checked`.
+6. **Index** — the record keeps `artifact_sha256`, `artifact_ref`,
+   `safety_classification`, and a `test_result["collect"]` summary.
+
+**Collection never verifies anything.** `verification_status` stays at its
+current value (`unverified` by default); only the operator-driven, isolated lab
+reproduction path (see [LAB.md](LAB.md)) may raise it.
+
+Triggers:
+
+- API: `POST /pocs/{id}/collect` (single), `POST /pocs/collect` (batch,
+  `only_uncollected` + `limit`), `GET /pocs/{id}/artifact` (download as a
+  plain-text attachment with `X-Content-Type-Options: nosniff`).
+- CLI: `wpsec poc collect [POC_ID] [--limit N]`.
+- Dashboard: **Collect artifacts** on the PoC Intelligence page; collected rows
+  expose a hashed download link.
+
+Scanner **data** (the other "files ready to run") is pre-cached into the worker
+image: nuclei templates and the semgrep `p/php`/`p/wordpress` rulesets are
+fetched at build time, and a content-discovery wordlist ships in the repo — so a
+fresh Ubuntu 24 deployment detects without a first-use download.
+
 ## Automatic matching
 
 During a scan, the `poc_match` step correlates:

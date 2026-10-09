@@ -96,9 +96,27 @@ RUN chmod +x /usr/local/bin/entrypoint \
  && mkdir -p /home/wpworker/.cache \
  && chown -R wpworker:wpworker /app /home/wpworker
 
-# nuclei templates live under the worker's home; fetched on first use at runtime.
 USER wpworker
-ENV HOME=/home/wpworker
+ENV HOME=/home/wpworker \
+    SEMGREP_SEND_METRICS=off
+
+# Pre-cache scanner DATA so the image is ready to run offline on Ubuntu 24 (no
+# first-use download). Both are resilient: if the build host has no network the
+# layer still succeeds and the tool fetches/degrades at runtime as before.
+#
+# nuclei templates -> $HOME/nuclei-templates (the default location the step uses).
+RUN ( nuclei -update-templates -disable-update-check \
+      && echo "nuclei templates pre-cached" ) \
+    || echo "WARN: nuclei template pre-cache failed; fetched on first use at runtime"
+
+# semgrep p/php + p/wordpress registry rulesets -> $HOME/.semgrep cache, so the
+# source-analysis step's primary config works without reaching the registry.
+RUN set -eux; \
+    d="$(mktemp -d)"; printf '<?php echo $_GET["x"]; ?>\n' > "$d/probe.php"; \
+    ( semgrep --config p/php --config p/wordpress --quiet --no-error \
+        --metrics=off --timeout=60 "$d" >/dev/null 2>&1 || true ); \
+    rm -rf "$d"; \
+    echo "semgrep rulesets pre-cached (best-effort)"
 
 ENTRYPOINT ["entrypoint"]
 CMD ["worker"]

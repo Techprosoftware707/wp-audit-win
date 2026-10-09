@@ -34,6 +34,12 @@ placeholder.
   KEV, OSV, and the GitHub Advisory Database**, plus registered **WPScan /
   WordPress.org / vendor** sources. Background sync via the worker maintenance
   loop; KEV is distinguished from merely-published.
+- **PoC artifact collector** (`poc_collector.py`): download-where-permitted →
+  SHA-256 → static inspection → safety classification → store (MinIO/local) →
+  index. SSRF-guarded, size-capped, and **never executes** the artifact; every
+  record stays UNVERIFIED. Exposed via `POST /pocs/{id}/collect`, batch
+  `POST /pocs/collect`, `GET /pocs/{id}/artifact`, `wpsec poc collect`, and the
+  dashboard's **Collect artifacts** button.
 - Next.js dashboard: login, dashboard, targets (+add, authorize, one-click Full
   Audit), **scan detail (live stages + Stop + JSON/CSV/HTML export, failed stages
   surfaced)**, **finding detail (evidence, CVE link, remediation, safe
@@ -44,7 +50,7 @@ placeholder.
   per-account + per-IP login throttling, no-shell subprocesses (WP-CLI path
   quoted), SSH host-key verification by default, secret redaction (incl. Gitleaks),
   commit-before-enqueue job durability.
-- Test suite: 96 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
+- Test suite: 117 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
   plus two end-to-end harnesses (real-HTTP inline, and Redis + worker distributed).
 
 ## Degrades gracefully (works when the tool/engine is present)
@@ -55,6 +61,9 @@ not available, so the base stack always completes a scan. Install them via the
 
 - `nmap`, `nuclei`, `wpscan`, `whatweb`, `nikto`, `ffuf` — need their binaries
   (the worker image installs each resiliently; a failed install self-skips).
+  The worker image also **pre-caches detection data** — nuclei templates and the
+  semgrep `p/php`/`p/wordpress` rulesets — and ships a content-discovery
+  wordlist, so a fresh Ubuntu 24 deploy detects without a first-use download.
 - `zap` — needs the ZAP daemon (the `zap` service, `scanners` profile).
 - `semgrep` / `gitleaks` — static source analysis; need the binary **and** a
   source tree (`WPSEC_SOURCE_DIR`). Gitleaks redacts any secret it finds.
@@ -85,7 +94,7 @@ after the authorization gate passes.
 
 ## Build/run environment note
 
-Validated with the native toolchain: 96 backend tests, end-to-end over real HTTP
+Validated with the native toolchain: 117 backend tests, end-to-end over real HTTP
 (inline **and** Redis + worker distributed, using the real `whatweb` binary), and
 `docker compose config` for all profiles. Live `docker build` / `docker compose
 up` were not exercised in the authoring sandbox (no Docker daemon); the

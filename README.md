@@ -131,6 +131,8 @@ wpsec scan start <id> --profile standard
 wpsec scan status <scan-id>
 wpsec finding list <scan-id>
 wpsec report generate <scan-id> --format html
+wpsec poc update                      # sync free vuln-intel sources (NVD/KEV/OSV/GHSA…)
+wpsec poc collect --limit 100         # download+hash+classify PoC artifacts (never executed)
 ```
 
 See [`backend/app/cli`](backend/app/cli) and `wpsec --help`.
@@ -149,13 +151,24 @@ samples/        sample data for a demo environment
 
 ## Status
 
-This repository is being built incrementally. The foundation — deployment,
-backend core, data model, auth/RBAC/audit, authorization gating, job engine,
-scan orchestration, the HTTP/WordPress fingerprint step, correlation, risk,
-evidence, reporting, CLI, tests, installer — is implemented and runnable.
-Components that are architected with graceful degradation (e.g. a scanner whose
-binary is not present) are marked explicitly in code and in
+The platform is implemented and runnable end-to-end: deployment, backend core,
+data model, auth/RBAC/audit, authorization gating, job engine, the 19-step
+one-click Full Audit pipeline, correlation, risk, evidence, reporting, free
+vulnerability intelligence (NVD/CISA-KEV/OSV/GitHub-Advisory + WPScan/
+WordPress.org/vendor), the SSRF-safe PoC artifact collector, CLI, dashboard,
+tests, and installer. Scanner tooling and detection data (nuclei templates,
+semgrep rulesets, content wordlist) ship in the worker image for a
+ready-to-run Ubuntu 24 deployment; any component that degrades gracefully when
+its binary/engine is absent is marked explicitly in code and in
 [`docs/STATUS.md`](docs/STATUS.md). Nothing is a silent placeholder.
+
+**Safety boundary (by design):** this tool performs *authorized* assessment and
+*operator-driven* verification. It does **not** autonomously compromise targets,
+create admin accounts through exploits, steal credentials/tokens, run arbitrary
+commands on third-party systems, or escalate to host root. Collected PoCs are
+hashed, statically classified, and left UNVERIFIED — never auto-executed. Any
+aggressive reproduction happens only in the isolated, human-approved lab. See
+[`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## License
 

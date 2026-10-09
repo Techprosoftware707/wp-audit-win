@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -11,13 +11,14 @@ from app.models.base import utcnow
 from app.models.poc import PoC, PoCSource
 from app.models.user import User
 from app.schemas.misc import (
+    PoCCollectRequest,
     PoCCreate,
     PoCOut,
     PoCSourceOut,
     PoCSyncRequest,
     PoCUpdate,
 )
-from app.services import audit, intel_sync
+from app.services import audit, intel_sync, poc_collector
 
 router = APIRouter(prefix="/pocs", tags=["pocs"])
 
@@ -127,6 +128,48 @@ def sync_sources(
     return {"results": results}
 
 
+@router.post("/collect")
+def collect_batch(
+    body: PoCCollectRequest,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(require_permission("pocs:write")),
+):
+    """Download + statically classify a batch of PoC artifacts.
+
+    Artifacts are fetched (SSRF-guarded, size-capped), hashed, statically
+    inspected, classified, and stored. **None are executed**; every record
+    stays at its current verification status (UNVERIFIED by default).
+    """
+    stmt = select(PoC).where(PoC.source_url != "")
+    if body.poc_ids:
+        stmt = select(PoC).where(PoC.id.in_(body.poc_ids))
+    elif body.only_uncollected:
+        stmt = stmt.where(PoC.artifact_ref == "")
+    stmt = stmt.order_by(PoC.created_at.desc()).limit(body.limit)
+    pocs = db.execute(stmt).scalars().all()
+
+    results = []
+    for poc in pocs:
+        try:
+            r = poc_collector.collect(db, poc)
+        except Exception as exc:  # noqa: BLE001 — one bad source must not abort the batch
+            r = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        results.append({"poc_id": poc.id, "poc_code": poc.poc_code, **r})
+
+    collected = sum(1 for r in results if r.get("status") == "collected")
+    audit.record(
+        db,
+        action="poc.collect_batch",
+        actor=actor,
+        object_type="poc",
+        request=request,
+        detail={"requested": len(pocs), "collected": collected},
+    )
+    db.commit()
+    return {"requested": len(pocs), "collected": collected, "results": results}
+
+
 @router.get("/{poc_id}", response_model=PoCOut)
 def get_poc(
     poc_id: str,
@@ -166,3 +209,57 @@ def update_poc(
     db.commit()
     db.refresh(poc)
     return poc
+
+
+@router.post("/{poc_id}/collect")
+def collect_poc(
+    poc_id: str,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(require_permission("pocs:write")),
+):
+    """Download + statically classify one PoC's artifact. Never executes it."""
+    poc = db.get(PoC, poc_id)
+    if not poc:
+        raise HTTPException(status_code=404, detail="PoC not found")
+    result = poc_collector.collect(db, poc)
+    audit.record(
+        db,
+        action="poc.collect",
+        actor=actor,
+        object_type="poc",
+        object_id=poc.id,
+        request=request,
+        detail={"status": result.get("status"), "sha256": result.get("sha256")},
+    )
+    db.commit()
+    return result
+
+
+@router.get("/{poc_id}/artifact")
+def download_artifact(
+    poc_id: str,
+    db: Session = Depends(db_session),
+    _: User = Depends(require_permission("pocs:read")),
+) -> Response:
+    """Download the stored (never-executed) PoC artifact as an attachment."""
+    poc = db.get(PoC, poc_id)
+    if not poc:
+        raise HTTPException(status_code=404, detail="PoC not found")
+    if not poc.artifact_ref:
+        raise HTTPException(status_code=404, detail="No artifact collected for this PoC")
+    loaded = poc_collector.load_artifact(poc)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="PoC artifact not available")
+    data, content_type = loaded
+    # Force a safe content type + attachment disposition so a stored PoC is
+    # never rendered/served as active content by a browser.
+    filename = f"{poc.poc_code}-{poc.artifact_sha256[:12]}.txt"
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

@@ -67,9 +67,18 @@ def test_technologies_filters_metadata_denylist():
     assert "HTTPServer" in names
     assert "nginx" in names
     # Metadata / header plugins are filtered out.
-    for denied in ("IP", "Country", "Title", "UncommonHeaders", "Script",
-                   "Frame", "HTML5", "X-Frame-Options", "Strict-Transport-Security",
-                   "Open-Graph-Protocol"):
+    for denied in (
+        "IP",
+        "Country",
+        "Title",
+        "UncommonHeaders",
+        "Script",
+        "Frame",
+        "HTML5",
+        "X-Frame-Options",
+        "Strict-Transport-Security",
+        "Open-Graph-Protocol",
+    ):
         assert denied not in names
 
 
@@ -105,8 +114,7 @@ def test_confidence_absent_defaults_to_100():
 def test_certainty_present_sets_confidence():
     # -a 3 produces a plugin carrying explicit version + certainty (e.g. jQuery).
     raw = (
-        '[{"target":"https://t.example","plugins":'
-        '{"jQuery":{"certainty":75,"version":["3.6.0"]}}}]'
+        '[{"target":"https://t.example","plugins":{"jQuery":{"certainty":75,"version":["3.6.0"]}}}]'
     )
     data = whatweb.parse(raw)
     techs = {t["name"]: t for t in whatweb.technologies(data[0])}

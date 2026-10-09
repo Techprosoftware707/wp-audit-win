@@ -1,4 +1,5 @@
 """Unit tests for the Gitleaks parser (pure; verifies secret redaction)."""
+
 from __future__ import annotations
 
 from app.workers.parsers import gitleaks

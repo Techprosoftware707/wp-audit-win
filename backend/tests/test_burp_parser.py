@@ -101,8 +101,7 @@ def test_url_is_origin_plus_path():
 def test_dedup_key_format():
     issues = _parsed()
     assert issues[0]["dedup_key"] == (
-        "sig:burp:Cross-site scripting (reflected):"
-        "https://wp.authorized-target.example/?s=test"
+        "sig:burp:Cross-site scripting (reflected):https://wp.authorized-target.example/?s=test"
     )
 
 
@@ -153,10 +152,24 @@ def test_severity_map_values():
 def test_false_positive_issue_is_dropped():
     data = {
         "issue_events": [
-            {"type": "issue_found", "issue": {"name": "X", "severity": "false_positive",
-                                              "origin": "https://t.example", "path": "/"}},
-            {"type": "issue_found", "issue": {"name": "Y", "severity": "medium",
-                                              "origin": "https://t.example", "path": "/a"}},
+            {
+                "type": "issue_found",
+                "issue": {
+                    "name": "X",
+                    "severity": "false_positive",
+                    "origin": "https://t.example",
+                    "path": "/",
+                },
+            },
+            {
+                "type": "issue_found",
+                "issue": {
+                    "name": "Y",
+                    "severity": "medium",
+                    "origin": "https://t.example",
+                    "path": "/a",
+                },
+            },
         ]
     }
     issues = burp.parse_issues(data)

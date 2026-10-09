@@ -75,7 +75,8 @@ def _ensure_bucket() -> bool:
         _mark_down()
         log.warning(
             "MinIO unavailable (cooldown %ss), storing evidence inline only: %s",
-            int(_DOWN_COOLDOWN_S), exc,
+            int(_DOWN_COOLDOWN_S),
+            exc,
         )
         return False
 

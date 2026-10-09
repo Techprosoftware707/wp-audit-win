@@ -1,4 +1,5 @@
 """Regression tests for audit-confirmed security fixes."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -19,20 +20,45 @@ def test_failed_authorization_step_blocks_downstream():
         t = Target(name="x", base_url="http://x.example.test", host="x.example.test")
         db.add(t)
         db.flush()
-        scan = Scan(target_id=t.id, status=ScanStatus.RUNNING.value,
-                    effective_intensity="standard")
+        scan = Scan(target_id=t.id, status=ScanStatus.RUNNING.value, effective_intensity="standard")
         db.add(scan)
         db.flush()
-        db.add_all([
-            ScanStep(scan_id=scan.id, name="authorization", queue="default", ordering=0,
-                     depends_on=[], status=StepStatus.FAILED.value),
-            ScanStep(scan_id=scan.id, name="discovery", queue="fingerprint", ordering=1,
-                     depends_on=["authorization"], status=StepStatus.PENDING.value),
-            ScanStep(scan_id=scan.id, name="wp_fingerprint", queue="fingerprint", ordering=2,
-                     depends_on=["discovery"], status=StepStatus.PENDING.value),
-            ScanStep(scan_id=scan.id, name="wpscan", queue="wpscan", ordering=3,
-                     depends_on=["wp_fingerprint"], status=StepStatus.PENDING.value),
-        ])
+        db.add_all(
+            [
+                ScanStep(
+                    scan_id=scan.id,
+                    name="authorization",
+                    queue="default",
+                    ordering=0,
+                    depends_on=[],
+                    status=StepStatus.FAILED.value,
+                ),
+                ScanStep(
+                    scan_id=scan.id,
+                    name="discovery",
+                    queue="fingerprint",
+                    ordering=1,
+                    depends_on=["authorization"],
+                    status=StepStatus.PENDING.value,
+                ),
+                ScanStep(
+                    scan_id=scan.id,
+                    name="wp_fingerprint",
+                    queue="fingerprint",
+                    ordering=2,
+                    depends_on=["discovery"],
+                    status=StepStatus.PENDING.value,
+                ),
+                ScanStep(
+                    scan_id=scan.id,
+                    name="wpscan",
+                    queue="wpscan",
+                    ordering=3,
+                    depends_on=["wp_fingerprint"],
+                    status=StepStatus.PENDING.value,
+                ),
+            ]
+        )
         db.flush()
 
         # Drive the real inline drain loop: a FAILED authorization step must abort
@@ -91,8 +117,15 @@ def test_finding_code_survives_deletion():
         for _ in range(3):
             code = next_finding_code(db)
             codes.append(code)
-            db.add(Finding(finding_code=code, target_id=t.id, title="f",
-                           dedup_key=f"k{code}", severity="low"))
+            db.add(
+                Finding(
+                    finding_code=code,
+                    target_id=t.id,
+                    title="f",
+                    dedup_key=f"k{code}",
+                    severity="low",
+                )
+            )
             db.flush()
         assert codes == [f"FIND-{year}-000001", f"FIND-{year}-000002", f"FIND-{year}-000003"]
         # Correlation deletes a middle finding; the next code must NOT reuse 000003.

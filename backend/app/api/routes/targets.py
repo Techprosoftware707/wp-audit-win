@@ -54,9 +54,7 @@ def list_targets(
     _: User = Depends(require_permission("targets:read")),
 ):
     targets = (
-        db.execute(
-            select(Target).order_by(Target.created_at.desc()).limit(limit).offset(offset)
-        )
+        db.execute(select(Target).order_by(Target.created_at.desc()).limit(limit).offset(offset))
         .scalars()
         .all()
     )

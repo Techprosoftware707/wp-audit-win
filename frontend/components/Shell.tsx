@@ -29,6 +29,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   if (isLogin) return <>{children}</>;
   if (authed === null) return <div className="p-8 text-slate-400">Loading…</div>;
+  // Never render the authenticated app shell for an unauthenticated viewer;
+  // the effect above is redirecting to /login.
+  if (!authed) return <div className="p-8 text-slate-400">Redirecting to sign in…</div>;
 
   return (
     <div className="flex min-h-screen">

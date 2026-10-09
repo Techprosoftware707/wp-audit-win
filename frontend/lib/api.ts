@@ -71,3 +71,24 @@ export async function login(email: string, password: string, totp?: string) {
 export function sevClass(sev: string) {
   return `pill sev-${sev}`;
 }
+
+/** Download a file from an authenticated endpoint (sends the bearer token, which
+ * window.open cannot), then trigger a browser save. */
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, `download failed (HTTP ${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

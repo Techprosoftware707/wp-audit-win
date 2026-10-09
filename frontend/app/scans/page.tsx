@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
@@ -29,7 +30,11 @@ export default function ScansPage() {
           <tbody>
             {scans.map((s) => (
               <tr key={s.id}>
-                <td className="td font-mono text-xs">{s.id.slice(0, 8)}</td>
+                <td className="td font-mono text-xs">
+                  <Link href={`/scans/${s.id}`} className="text-sky-400">
+                    {s.id.slice(0, 8)}
+                  </Link>
+                </td>
                 <td className="td">{s.status}</td>
                 <td className="td">{s.effective_intensity}</td>
                 <td className="td">{s.summary?.critical ?? 0}</td>

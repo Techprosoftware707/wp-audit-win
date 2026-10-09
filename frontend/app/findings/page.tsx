@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, sevClass } from "@/lib/api";
 
@@ -44,7 +45,11 @@ export default function FindingsPage() {
           <tbody>
             {findings.map((f) => (
               <tr key={f.id}>
-                <td className="td font-mono text-xs">{f.finding_code}</td>
+                <td className="td font-mono text-xs">
+                  <Link href={`/findings/${f.id}`} className="text-sky-400">
+                    {f.finding_code}
+                  </Link>
+                </td>
                 <td className="td">
                   <span className={sevClass(f.severity)}>{f.severity}</span>
                 </td>

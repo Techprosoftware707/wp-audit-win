@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api, sevClass } from "@/lib/api";
+import { api, downloadFile, sevClass } from "@/lib/api";
 
 export default function TargetDetail() {
   const { id } = useParams<{ id: string }>();
@@ -17,18 +18,20 @@ export default function TargetDetail() {
   const [authForm, setAuthForm] = useState({ authorized_by: "", expiration_date: "", scope: "" });
 
   const load = useCallback(async () => {
-    const [t, a, f, p, s] = await Promise.all([
-      api(`/targets/${id}`),
+    // The target itself is required; secondary panels degrade independently so a
+    // single failing request can never leave the page stuck on "Loading…".
+    setTarget(await api(`/targets/${id}`));
+    const [a, f, p, s] = await Promise.allSettled([
       api(`/targets/${id}/authorizations`),
       api(`/findings?target_id=${id}`),
       api(`/targets/${id}/plugins`),
       api(`/scans?target_id=${id}`),
     ]);
-    setTarget(t);
-    setAuths(a as any[]);
-    setFindings(f as any[]);
-    setPlugins(p as any[]);
-    setScans(s as any[]);
+    const val = (r: PromiseSettledResult<any>) => (r.status === "fulfilled" ? r.value : []);
+    setAuths(val(a));
+    setFindings(val(f));
+    setPlugins(val(p));
+    setScans(val(s));
   }, [id]);
 
   useEffect(() => {
@@ -71,15 +74,12 @@ export default function TargetDetail() {
       });
       setMsg(`Scan ${scan.id.slice(0, 8)} ${scan.status}. A report is generated automatically.`);
       await load();
-      // One-click: open the auto-generated report for this scan if it's ready.
+      // One-click: download the auto-generated report for this scan if ready.
       try {
         const reps: any[] = await api(`/reports?target_id=${id}`);
         const rep = reps.find((r) => r.scan_id === scan.id && r.status === "ready");
         if (rep) {
-          window.open(
-            `${process.env.NEXT_PUBLIC_API_BASE || "/api"}/reports/${rep.id}/download`,
-            "_blank",
-          );
+          await downloadFile(`/reports/${rep.id}/download`, `report-${scan.id.slice(0, 8)}.html`);
         }
       } catch {
         /* report may still be generating on a worker; the scan row has a Report button */
@@ -97,7 +97,7 @@ export default function TargetDetail() {
         method: "POST",
         body: JSON.stringify({ report_format: "html", title: `Report ${target.name}` }),
       });
-      window.open(`${process.env.NEXT_PUBLIC_API_BASE || "/api"}/reports/${rep.id}/download`, "_blank");
+      await downloadFile(`/reports/${rep.id}/download`, `report-${scanId.slice(0, 8)}.html`);
     } catch (e: any) {
       setMsg(e.message);
     }
@@ -226,7 +226,9 @@ export default function TargetDetail() {
           <div className="card space-y-2 text-sm">
             {scans.map((s) => (
               <div key={s.id} className="flex items-center justify-between">
-                <span className="font-mono text-xs">{s.id.slice(0, 8)}</span>
+                <Link href={`/scans/${s.id}`} className="font-mono text-xs text-sky-400">
+                  {s.id.slice(0, 8)}
+                </Link>
                 <span>{s.status}</span>
                 <button className="btn-ghost" onClick={() => report(s.id)}>
                   Report

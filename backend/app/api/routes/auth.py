@@ -19,6 +19,7 @@ from app.schemas.auth import (
     LoginRequest,
     MFASetupOut,
     MFAVerifyRequest,
+    PasswordChange,
     RefreshRequest,
     TokenPair,
     UserOut,
@@ -92,6 +93,35 @@ def refresh(body: RefreshRequest, db: Session = Depends(db_session)) -> TokenPai
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+@router.post("/change-password", response_model=UserOut)
+def change_password(
+    body: PasswordChange,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> User:
+    """Self-service credential change. Requires the CURRENT password, so a stolen
+    access token alone cannot rotate the victim's password; it changes only the
+    caller's own credential and never alters role/permissions."""
+    if not security.verify_password(body.current_password, user.hashed_password):
+        audit.record(
+            db,
+            action="auth.password_change",
+            actor=user,
+            result="failure",
+            request=request,
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=400, detail="New password must differ from the current one")
+    user.hashed_password = security.hash_password(body.new_password)
+    audit.record(db, action="auth.password_change", actor=user, request=request)
+    db.commit()
+    db.refresh(user)
     return user
 
 

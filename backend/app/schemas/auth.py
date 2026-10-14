@@ -52,6 +52,11 @@ class UserUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=12)
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12)
+
+
 class MFASetupOut(BaseModel):
     secret: str
     provisioning_uri: str

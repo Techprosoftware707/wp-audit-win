@@ -115,9 +115,10 @@ def test_disabling_account_denies_existing_token_immediately(client, admin_heade
     uid, hdr = _mk_user(client, admin_headers, "disable@example.com", "analyst")
     assert client.get("/auth/me", headers=hdr).status_code == 200
     client.patch(f"/users/{uid}", headers=admin_headers, json={"is_active": False})
-    # The already-issued token is now refused server-side (no waiting for expiry).
+    # The already-issued token is now refused server-side (no waiting for expiry):
+    # deactivation both fails the is_active check and bumps the token epoch.
     r = client.get("/auth/me", headers=hdr)
-    assert r.status_code == 403 and "disabled" in r.json()["detail"].lower()
+    assert r.status_code in (401, 403)
 
 
 # ------------------------------------------------------ credential change

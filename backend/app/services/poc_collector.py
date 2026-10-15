@@ -36,7 +36,7 @@ import os
 import re
 import socket
 from dataclasses import dataclass, field
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
@@ -102,7 +102,13 @@ _INTRUSIVE_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("privilege field write", re.compile(r"wp_capabilities|wp_user_level|set_role\s*\(", re.I)),
     # Webshell drop / arbitrary file write.
     ("file upload move", re.compile(r"\bmove_uploaded_file\s*\(")),
-    ("arbitrary file write", re.compile(r"\b(file_put_contents|fwrite|fopen)\s*\([^)]*['\"]w")),
+    # file_put_contents()/fwrite()/fputs() ALWAYS write — flag unconditionally
+    # (they take no mode argument, so the old `['"]w` test could never match).
+    ("file write", re.compile(r"\b(file_put_contents|fwrite|fputs)\s*\(")),
+    # fopen() is a write only in a write/append/create mode.
+    ("file open write mode", re.compile(r"\bfopen\s*\([^)]*['\"][waxc]\+?b?['\"]")),
+    # PHP backtick execution operator wrapping a variable/command.
+    ("php backtick exec", re.compile(r"`[^`\n]{0,160}\$[A-Za-z_]")),
 ]
 
 _ACTIVE_BENIGN_PATTERNS: list[tuple[str, re.Pattern]] = [
@@ -250,25 +256,26 @@ def _resolve(host: str) -> list[str]:
         return []
 
 
-def _host_is_public(host: str) -> tuple[bool, str]:
-    """A PoC source must live on the public internet.
+def _resolve_and_validate(host: str) -> tuple[bool, str, list[str]]:
+    """Resolve a host and require EVERY address to be public.
 
     Unlike the scanner's scope guard (which trusts the operator-authorized
     scope, possibly an internal host), the collector pulls from arbitrary
     public URLs, so any host resolving into private/loopback/link-local/
     reserved space is refused to prevent SSRF into the deployment's own
-    network or cloud metadata.
+    network or cloud metadata. Returns the resolved addresses so the caller can
+    pin the connection to a validated one.
     """
     if not host:
-        return False, "no host"
+        return False, "no host", []
     addrs = _resolve(host)
     if not addrs:
-        return False, f"cannot resolve host {host!r}"
+        return False, f"cannot resolve host {host!r}", []
     for ip in addrs:
         try:
             a = ipaddress.ip_address(ip)
         except ValueError:
-            return False, f"invalid resolved address {ip!r}"
+            return False, f"invalid resolved address {ip!r}", []
         if (
             a.is_private
             or a.is_loopback
@@ -277,29 +284,38 @@ def _host_is_public(host: str) -> tuple[bool, str]:
             or a.is_unspecified
             or a.is_reserved
         ):
-            return False, f"host resolves to non-public address {ip}"
-    return True, ""
+            return False, f"host resolves to non-public address {ip}", []
+    return True, "", addrs
 
 
-def _check_url(url: str) -> tuple[bool, str]:
-    p = urlparse(url)
-    if p.scheme not in ALLOWED_SCHEMES:
-        return False, f"unsupported scheme {p.scheme!r}"
-    return _host_is_public(p.hostname or "")
+def _host_is_public(host: str) -> tuple[bool, str]:
+    ok, why, _ = _resolve_and_validate(host)
+    return ok, why
+
+
+def _pin_http(p, ip: str) -> tuple[str, dict]:
+    """Rewrite an http(s) URL's host to an already-validated IP and carry the
+    original Host header, so httpx connects to that exact IP without a second
+    DNS lookup. This closes the resolve-then-connect (DNS-rebinding) window for
+    plaintext http. https needs no pinning: TLS certificate validation already
+    rejects a rebind to an unrelated IP whose cert will not match the hostname."""
+    host_hdr = p.hostname or ""
+    netloc = f"[{ip}]" if ":" in ip else ip
+    if p.port:
+        netloc += f":{p.port}"
+        host_hdr += f":{p.port}"
+    pinned = urlunparse((p.scheme, netloc, p.path or "/", p.params, p.query, ""))
+    return pinned, {"Host": host_hdr}
 
 
 def fetch_public(url: str) -> FetchResult:
     """Download bytes from a public http(s) URL with SSRF + size guards.
 
-    Redirects are followed manually (max :data:`MAX_REDIRECTS`) and every hop
-    is re-validated. The body is read in a streaming, size-capped loop.
+    Each hop (initial URL + every redirect) is resolved and validated; plaintext
+    http connections are pinned to the validated IP to defeat DNS rebinding. The
+    body is read in a streaming, size-capped loop.
     """
-    url = (url or "").strip()
-    ok, why = _check_url(url)
-    if not ok:
-        return FetchResult(error=f"blocked: {why}")
-
-    current = url
+    current = (url or "").strip()
     try:
         with httpx.Client(
             transport=_TEST_TRANSPORT,
@@ -308,23 +324,26 @@ def fetch_public(url: str) -> FetchResult:
             headers={"User-Agent": USER_AGENT, "Accept": "*/*"},
             trust_env=True,
         ) as client:
-            for _ in range(MAX_REDIRECTS + 1):
-                with client.stream("GET", current) as r:
+            for hop in range(MAX_REDIRECTS + 1):
+                p = urlparse(current)
+                if p.scheme not in ALLOWED_SCHEMES:
+                    pre = "redirect blocked" if hop else "blocked"
+                    return FetchResult(
+                        final_url=current, error=f"{pre}: unsupported scheme {p.scheme!r}"
+                    )
+                ok, why, ips = _resolve_and_validate(p.hostname or "")
+                if not ok:
+                    pre = "redirect blocked" if hop else "blocked"
+                    return FetchResult(final_url=current, error=f"{pre}: {why}")
+                req_url, extra_headers = current, {}
+                if p.scheme == "http":
+                    req_url, extra_headers = _pin_http(p, ips[0])
+                with client.stream("GET", req_url, headers=extra_headers) as r:
                     if r.is_redirect and r.headers.get("location"):
-                        nxt = urljoin(current, r.headers["location"])
-                        ok, why = _check_url(nxt)
-                        if not ok:
-                            return FetchResult(
-                                final_url=current,
-                                error=f"redirect blocked: {why} ({nxt})",
-                            )
-                        current = nxt
+                        current = urljoin(current, r.headers["location"])
                         continue
                     if r.status_code >= 400:
-                        return FetchResult(
-                            final_url=str(r.url),
-                            error=f"HTTP {r.status_code}",
-                        )
+                        return FetchResult(final_url=current, error=f"HTTP {r.status_code}")
                     chunks: list[bytes] = []
                     total = 0
                     truncated = False
@@ -338,7 +357,7 @@ def fetch_public(url: str) -> FetchResult:
                     return FetchResult(
                         data=data,
                         content_type=r.headers.get("content-type", "").split(";")[0].strip(),
-                        final_url=str(r.url),
+                        final_url=current,
                         truncated=truncated,
                     )
             return FetchResult(final_url=current, error="too many redirects")

@@ -65,6 +65,12 @@ def _user_from_bearer(db: Session, token: str) -> User | None:
     if payload.get("type") != "access":
         return None
     user = db.get(User, payload.get("sub"))
+    if user is None:
+        return None
+    # Token-epoch check: a password change / MFA disable / deactivation bumps the
+    # user's epoch, invalidating every token minted under the old epoch.
+    if int(payload.get("ep", 0)) != int(user.token_epoch or 0):
+        return None
     return user
 
 
@@ -77,20 +83,29 @@ def _user_from_api_key(db: Session, raw_key: str) -> User | None:
     ).scalars()
     for row in rows:
         if verify_password(raw_key, row.hashed_key):
+            # Record usage so a stolen key is detectable and stale keys prunable.
+            from app.models.base import utcnow
+
+            row.last_used_at = utcnow()
+            db.commit()
             return db.get(User, row.user_id)
     return None
 
 
 def get_current_user(
+    request: Request,
     db: Session = Depends(db_session),
     creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> User:
     user: User | None = None
+    method = ""
     if creds and creds.scheme.lower() == "bearer":
         user = _user_from_bearer(db, creds.credentials)
+        method = "bearer"
     elif x_api_key:
         user = _user_from_api_key(db, x_api_key)
+        method = "api_key"
 
     if user is None:
         raise HTTPException(
@@ -100,6 +115,21 @@ def get_current_user(
         )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+    # Record how the caller authenticated so sensitive self-service routes can
+    # refuse API-key callers (key management + MFA management require a session).
+    request.state.auth_method = method
+    return user
+
+
+def deny_api_key_auth(request: Request, user: User = Depends(get_current_user)) -> User:
+    """Guard for sensitive self-service routes (key & MFA management, password
+    change): refuse callers authenticated by a long-lived API key, so a single
+    leaked key cannot mint more keys or disable MFA."""
+    if getattr(request.state, "auth_method", "") == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action requires an interactive (password) session, not an API key.",
+        )
     return user
 
 

@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.models.base import utcnow
 from app.models.enums import SEVERITY_RANK, Severity
-from app.models.finding import Evidence, Finding
+from app.models.finding import Evidence, Finding, VerificationTest
 from app.workers.base import StepContext
 
 
@@ -48,14 +48,27 @@ def run(ctx: StepContext) -> dict:
                 Severity(canonical.severity), 0
             ):
                 canonical.severity = other.severity
+            # A confirmed duplicate makes the canonical confirmed too.
+            if other.confirmed:
+                canonical.confirmed = True
             # Reassign evidence to the canonical finding.
-            evs = (
+            for ev in (
                 ctx.db.execute(select(Evidence).where(Evidence.finding_id == other.id))
                 .scalars()
                 .all()
-            )
-            for ev in evs:
+            ):
                 ev.finding_id = canonical.id
+            # Reassign verification history too, so merging never silently
+            # cascade-deletes a duplicate's VerificationTest rows.
+            for vt in (
+                ctx.db.execute(
+                    select(VerificationTest).where(VerificationTest.finding_id == other.id)
+                )
+                .scalars()
+                .all()
+            ):
+                vt.finding_id = canonical.id
+            ctx.db.flush()  # persist re-parenting before deleting the duplicate
             ctx.db.delete(other)
             merged += 1
         canonical.detectors = sorted(detectors)

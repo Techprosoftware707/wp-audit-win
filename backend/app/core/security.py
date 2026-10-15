@@ -42,12 +42,15 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
-def create_access_token(subject: str, *, role: str, extra: dict | None = None) -> str:
+def create_access_token(
+    subject: str, *, role: str, epoch: int = 0, extra: dict | None = None
+) -> str:
     now = _now()
     payload = {
         "sub": str(subject),
         "role": role,
         "type": "access",
+        "ep": int(epoch),
         "iat": int(now.timestamp()),
         "exp": int((now + dt.timedelta(minutes=settings.access_token_minutes)).timestamp()),
         "jti": uuid.uuid4().hex,
@@ -57,11 +60,12 @@ def create_access_token(subject: str, *, role: str, extra: dict | None = None) -
     return jwt.encode(payload, settings.secret_key, algorithm=ALGO)
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, *, epoch: int = 0) -> str:
     now = _now()
     payload = {
         "sub": str(subject),
         "type": "refresh",
+        "ep": int(epoch),
         "iat": int(now.timestamp()),
         "exp": int((now + dt.timedelta(days=settings.refresh_token_days)).timestamp()),
         "jti": uuid.uuid4().hex,

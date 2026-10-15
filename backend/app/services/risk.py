@@ -60,7 +60,8 @@ def score(inp: RiskInputs) -> tuple[float, str, dict]:
     """Return (score 0-100, risk_level, factor breakdown)."""
     base = (inp.cvss_score * 10.0) if inp.cvss_score else _SEVERITY_BASE.get(inp.severity, 50.0)
 
-    factors: dict[str, float] = {"base": round(base, 2)}
+    # Persist the CVSS used so later passes (risk_step) and reports can see it.
+    factors: dict[str, float] = {"base": round(base, 2), "cvss_score": inp.cvss_score}
 
     imp = _IMPORTANCE_FACTOR.get(inp.asset_importance, 1.0)
     ver = _VERIFICATION_FACTOR.get(inp.verification_status, 1.0)

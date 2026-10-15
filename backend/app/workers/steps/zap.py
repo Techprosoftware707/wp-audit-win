@@ -22,7 +22,11 @@ def _zap_url(path: str) -> str:
 
 
 def _call(client: httpx.Client, path: str, **params) -> dict | None:
-    params.setdefault("apikey", settings.zap_api_key or settings.secret_key)
+    # Use ONLY the dedicated ZAP key. Never fall back to settings.secret_key:
+    # that value derives the credential-encryption key and signs JWTs, so
+    # sending it to the ZAP daemon (plaintext HTTP) would leak the platform's
+    # master secret. When no ZAP key is set, run() skips the step entirely.
+    params.setdefault("apikey", settings.zap_api_key)
     try:
         r = client.get(_zap_url(path), params=params, timeout=30)
         if r.status_code == 200:
@@ -33,6 +37,11 @@ def _call(client: httpx.Client, path: str, **params) -> dict | None:
 
 
 def run(ctx: StepContext) -> dict:
+    if not settings.zap_api_key:
+        return {
+            "skipped": True,
+            "reason": "ZAP_API_KEY not configured (required; secret_key is never a fallback)",
+        }
     base = ctx.target.base_url.rstrip("/")
     try:
         with httpx.Client(timeout=15) as probe:

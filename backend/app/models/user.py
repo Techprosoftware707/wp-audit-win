@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, uuid_pk
@@ -24,6 +24,11 @@ class User(Base, TimestampMixin):
     # MFA (TOTP) — secret is stored encrypted at rest.
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Token epoch: bumped on password change, MFA disable, and deactivation.
+    # Every issued JWT carries the epoch it was minted under; a mismatch is
+    # rejected, so a credential change invalidates all previously-issued tokens.
+    token_epoch: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
 
     last_login_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

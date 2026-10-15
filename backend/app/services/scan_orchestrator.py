@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import INTENSITY_ORDER, settings
@@ -293,10 +293,22 @@ def run_step(db: Session, step_id: str) -> None:
         db.flush()
         return
 
-    step.status = StepStatus.RUNNING.value
-    step.started_at = utcnow()
-    db.add(step)
-    db.flush()
+    # Atomic claim: transition PENDING/QUEUED -> RUNNING in a single conditional
+    # UPDATE. If two workers race for the same step (e.g. the reaper re-enqueued a
+    # lost job that then arrived twice), only the one whose UPDATE matched a row
+    # proceeds; the loser sees rowcount 0 and returns, so a step never runs twice.
+    claimed = db.execute(
+        update(ScanStep)
+        .where(
+            ScanStep.id == step_id,
+            ScanStep.status.in_([StepStatus.PENDING.value, StepStatus.QUEUED.value]),
+        )
+        .values(status=StepStatus.RUNNING.value, started_at=utcnow())
+    )
+    db.commit()
+    if claimed.rowcount == 0:
+        return  # already claimed by another worker, or no longer runnable
+    db.refresh(step)
 
     registry = get_registry()
     fn = registry.get(step.name)
@@ -416,13 +428,38 @@ def reap_stale_scans(db: Session, *, step_timeout_s: int = 1800, requeue_after_s
 
     - A step stuck RUNNING past step_timeout_s is failed (the worker likely died).
     - A step stuck QUEUED past requeue_after_s (a lost job) is reset to PENDING so
-      it is re-enqueued.
+      it is re-enqueued. Re-enqueue is safe against duplicates because run_step
+      claims a step with an atomic conditional UPDATE (only one worker wins).
+    - A CANCELLED scan's lingering non-terminal steps are reconciled to SKIPPED,
+      so a worker that died mid-step on a cancelled scan never leaves it stuck.
     Then each RUNNING scan is re-driven so it can finalize. Returns #scans touched."""
     now = utcnow()
     running = (
         db.execute(select(Scan).where(Scan.status == ScanStatus.RUNNING.value)).scalars().all()
     )
     touched = 0
+
+    # Reconcile cancelled scans: nothing non-terminal should linger on them.
+    cancelled = (
+        db.execute(select(Scan).where(Scan.status == ScanStatus.CANCELLED.value)).scalars().all()
+    )
+    for scan in cancelled:
+        changed = False
+        for s in _steps(db, scan):
+            if s.status in (
+                StepStatus.PENDING.value,
+                StepStatus.QUEUED.value,
+                StepStatus.RUNNING.value,
+            ):
+                s.status = StepStatus.SKIPPED.value
+                s.error = "cancelled"
+                s.finished_at = now
+                db.add(s)
+                changed = True
+        if changed:
+            db.commit()
+            touched += 1
+
     for scan in running:
         steps = _steps(db, scan)
         changed = False

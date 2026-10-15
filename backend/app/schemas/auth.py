@@ -57,6 +57,12 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=12)
 
 
+class PasswordReauth(BaseModel):
+    """Step-up re-authentication body for sensitive MFA-management actions."""
+
+    current_password: str
+
+
 class MFASetupOut(BaseModel):
     secret: str
     provisioning_uri: str

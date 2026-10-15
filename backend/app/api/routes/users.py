@@ -81,9 +81,14 @@ def update_user(
     if body.role is not None:
         user.role = body.role.value
     if body.is_active is not None:
+        # Deactivating a user invalidates their outstanding tokens.
+        if user.is_active and body.is_active is False:
+            user.token_epoch = (user.token_epoch or 0) + 1
         user.is_active = body.is_active
     if body.password:
+        # An admin-forced password reset also invalidates outstanding tokens.
         user.hashed_password = security.hash_password(body.password)
+        user.token_epoch = (user.token_epoch or 0) + 1
     audit.record(
         db,
         action="user.update",

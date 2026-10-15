@@ -50,7 +50,16 @@ placeholder.
   per-account + per-IP login throttling, no-shell subprocesses (WP-CLI path
   quoted), SSH host-key verification by default, secret redaction (incl. Gitleaks),
   commit-before-enqueue job durability.
-- Test suite: 117 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
+- Second-pass hardening (independent 46-agent audit): self-service password
+  change + **token-epoch revocation** (a password change / MFA disable /
+  deactivation invalidates all outstanding JWTs); **step-up re-auth** for MFA
+  management; API-key callers blocked from key- and MFA-management (a leaked key
+  can't mint more keys or strip MFA); login-timing equalization; the ZAP step
+  never falls back to the master `secret_key`; `uvicorn` no longer trusts
+  `X-Forwarded-For` from everywhere; final risk pass honours catalog CVSS;
+  correlation preserves verification history on merge; atomic step-claim + reaper
+  reconciliation of cancelled scans; SSRF IP-pinning for the PoC fetcher.
+- Test suite: 160 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
   plus two end-to-end harnesses (real-HTTP inline, and Redis + worker distributed).
 
 ## Degrades gracefully (works when the tool/engine is present)
@@ -94,7 +103,7 @@ after the authorization gate passes.
 
 ## Build/run environment note
 
-Validated with the native toolchain: 117 backend tests, end-to-end over real HTTP
+Validated with the native toolchain: 160 backend tests, end-to-end over real HTTP
 (inline **and** Redis + worker distributed, using the real `whatweb` binary), and
 `docker compose config` for all profiles. Live `docker build` / `docker compose
 up` were not exercised in the authoring sandbox (no Docker daemon); the

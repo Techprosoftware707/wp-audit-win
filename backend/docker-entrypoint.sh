@@ -38,7 +38,12 @@ case "$CMD" in
     echo "[entrypoint] bootstrapping admin (idempotent)"
     python -m app.cli.bootstrap || true
     echo "[entrypoint] starting API"
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+    # Do NOT pass --forwarded-allow-ips='*': that lets any client spoof
+    # X-Forwarded-For and overwrite the source IP uvicorn reports, defeating the
+    # app's fail-closed trusted-proxy logic (per-IP login rate limiting + audit
+    # source IP). The application resolves the real client itself in
+    # get_client_ip(), trusting X-Forwarded-For ONLY from WPSEC_TRUSTED_PROXIES.
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000
     ;;
   worker)
     wait_for_db

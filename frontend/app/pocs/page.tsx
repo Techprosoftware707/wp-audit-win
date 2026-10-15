@@ -107,9 +107,13 @@ export default function PocsPage() {
                     <button
                       className="text-sky-400"
                       title={`sha256 ${p.artifact_sha256}`}
-                      onClick={() =>
-                        downloadFile(`/pocs/${p.id}/artifact`, `${p.poc_code}.txt`)
-                      }
+                      onClick={async () => {
+                        try {
+                          await downloadFile(`/pocs/${p.id}/artifact`, `${p.poc_code}.txt`);
+                        } catch (e: any) {
+                          setMsg(e.message);
+                        }
+                      }}
                     >
                       ⭳ {String(p.artifact_sha256).slice(0, 10)}…
                     </button>

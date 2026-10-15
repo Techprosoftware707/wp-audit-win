@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import time
 
 from sqlalchemy.orm import Session
@@ -19,6 +20,7 @@ from app.core.logging import get_logger
 from app.models.finding import Evidence
 
 log = get_logger("evidence")
+DATA_DIR = os.environ.get("WPSEC_DATA_DIR", os.path.join(os.getcwd(), "data"))
 _client = None
 _bucket_ready = False
 # Negative cache: when MinIO is unreachable, skip calls until this time so a
@@ -103,7 +105,25 @@ def put_artifact(key: str, data: bytes, content_type: str = "application/octet-s
         return ""
 
 
+def _store_local(key: str, data: bytes) -> str:
+    """Retain an artifact on local disk when object storage is unavailable, so a
+    MinIO outage degrades to local persistence instead of losing the bytes."""
+    path = os.path.join(DATA_DIR, "evidence")
+    os.makedirs(path, exist_ok=True)
+    fpath = os.path.join(path, key.replace("/", "_"))
+    with open(fpath, "wb") as fh:
+        fh.write(data)
+    return f"file://{fpath}"
+
+
 def get_artifact(key: str) -> bytes | None:
+    # A local-fallback artifact is addressed by its file:// storage key.
+    if key.startswith("file://"):
+        path = key[len("file://") :]
+        if os.path.exists(path):
+            with open(path, "rb") as fh:
+                return fh.read()
+        return None
     try:
         c = _get_client()
         resp = c.get_object(settings.minio_bucket, key)
@@ -140,6 +160,10 @@ def store(
         digest = sha256_hex(artifact)
         key = f"{target_id or 'misc'}/{scan_id or 'misc'}/{digest[:16]}.{artifact_ext}"
         storage_key = put_artifact(key, artifact, content_type)
+        # MinIO unavailable (not test/in-proc mode): keep the bytes on local disk
+        # rather than silently dropping the artifact.
+        if not storage_key and settings.queue_backend != "memory":
+            storage_key = _store_local(key, artifact)
         sha = digest
     else:
         sha = sha256_hex((request + response + body_excerpt).encode())

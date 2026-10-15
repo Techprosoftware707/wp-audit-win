@@ -20,13 +20,26 @@ echo "[restore] WARNING: this overwrites the current database."
 read -r -p "Continue? [y/N] " ans
 [ "$ans" = "y" ] || { echo "aborted"; exit 1; }
 
+echo "[restore] quiescing api/worker so nothing writes mid-restore"
+docker compose stop api worker >/dev/null 2>&1 || true
+
 echo "[restore] ensuring database service is up"
 docker compose up -d postgres
 sleep 3
 
-echo "[restore] restoring PostgreSQL"
-gunzip -c "${DIR}/postgres.sql.gz" | docker compose exec -T postgres \
-  psql -U "${POSTGRES_USER:-wpsec}" "${POSTGRES_DB:-wpsec}"
+echo "[restore] restoring PostgreSQL (single transaction; aborts+rolls back on any error)"
+# ON_ERROR_STOP + --single-transaction mean a failed restore rolls back entirely
+# rather than leaving a half-populated database that looks successful. pipefail
+# (set above) surfaces a gunzip failure too.
+if gunzip -c "${DIR}/postgres.sql.gz" | docker compose exec -T postgres \
+    psql -v ON_ERROR_STOP=1 --single-transaction \
+    -U "${POSTGRES_USER:-wpsec}" "${POSTGRES_DB:-wpsec}"; then
+  echo "[restore] database restored cleanly"
+else
+  echo "[restore] ERROR: restore failed and was rolled back; database unchanged" >&2
+  docker compose up -d
+  exit 1
+fi
 
 if [ -f "${DIR}/evidence.tar.gz" ]; then
   echo "[restore] restoring MinIO evidence"

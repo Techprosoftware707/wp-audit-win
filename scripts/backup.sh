@@ -18,13 +18,19 @@ docker compose exec -T postgres pg_dump --clean --if-exists \
   | gzip > "${OUT}/postgres.sql.gz"
 
 echo "[backup] exporting MinIO evidence bucket"
-if docker compose exec -T minio sh -c '
-  mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 &&
-  mc mirror --quiet "local/${MINIO_BUCKET:-wpsec-evidence}" /tmp/evidence-export >/dev/null 2>&1 &&
-  tar -C /tmp -czf - evidence-export' > "${OUT}/evidence.tar.gz" 2>/dev/null; then
+# Probe MinIO connectivity SEPARATELY so a real outage (evidence NOT backed up)
+# is surfaced loudly rather than being indistinguishable from an empty bucket.
+if ! docker compose exec -T minio sh -c '
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1'; then
+  echo "[backup] WARNING: MinIO unreachable — evidence was NOT backed up this run." >&2
+  rm -f "${OUT}/evidence.tar.gz"
+elif docker compose exec -T minio sh -c '
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 &&
+    mc mirror --quiet "local/${MINIO_BUCKET:-wpsec-evidence}" /tmp/evidence-export >/dev/null 2>&1 &&
+    tar -C /tmp -czf - evidence-export' > "${OUT}/evidence.tar.gz" 2>/dev/null; then
   echo "[backup] evidence exported"
 else
-  echo "[backup] evidence bucket empty or MinIO unavailable; skipping"
+  echo "[backup] MinIO reachable but bucket empty; nothing to export"
   rm -f "${OUT}/evidence.tar.gz"
 fi
 

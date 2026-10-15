@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,10 +20,11 @@ router = APIRouter(tags=["reports"])
 @router.get("/reports", response_model=list[ReportOut])
 def list_reports(
     target_id: str | None = None,
+    limit: int = Query(default=100, le=500),
     db: Session = Depends(db_session),
     _: User = Depends(require_permission("reports:read")),
 ):
-    q = select(Report).order_by(Report.created_at.desc())
+    q = select(Report).order_by(Report.created_at.desc()).limit(limit)
     if target_id:
         q = q.where(Report.target_id == target_id)
     return db.execute(q).scalars().all()

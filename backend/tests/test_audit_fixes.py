@@ -166,6 +166,29 @@ def test_reaper_reconciles_cancelled_scan():
         db.close()
 
 
+def test_evidence_binary_artifact_falls_back_to_local_disk(monkeypatch, tmp_path):
+    # When object storage is unavailable (and we are not in in-proc/test mode),
+    # a binary artifact must be retained on local disk, not silently dropped.
+    from app.services import evidence as ev
+
+    monkeypatch.setattr(ev, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(ev.settings, "queue_backend_override", "redis")  # non-memory
+    monkeypatch.setattr(ev, "put_artifact", lambda *a, **k: "")  # simulate MinIO down
+
+    db = SessionLocal()
+    try:
+        t = Target(name="t", base_url="http://t.test", host="t.test")
+        db.add(t)
+        db.flush()
+        row = ev.store(
+            db, target_id=t.id, kind="output", scanner="x", artifact=b"RAWBYTES", artifact_ext="bin"
+        )
+        assert row.storage_key.startswith("file://")
+        assert ev.get_artifact(row.storage_key) == b"RAWBYTES"
+    finally:
+        db.close()
+
+
 def test_run_step_atomic_claim_does_not_run_an_already_running_step(monkeypatch):
     from app.services import scan_orchestrator as orch
     from app.workers import steps as steps_mod

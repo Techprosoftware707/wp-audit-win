@@ -13,6 +13,7 @@ from app.api.routes import (
     inventory,
     labs,
     pocs,
+    recovery,
     reports,
     scans,
     schedules,
@@ -38,6 +39,7 @@ for module in (
     schedules,
     reports,
     labs,
+    recovery,
     audit_log,
 ):
     api_router.include_router(module.router)

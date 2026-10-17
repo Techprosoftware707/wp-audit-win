@@ -37,6 +37,8 @@ PERMISSIONS: dict[str, str] = {
     "schedules:read": "View schedules",
     "schedules:write": "Create/edit schedules",
     "workers:read": "View workers",
+    "recovery:read": "Detect admin accounts / lockout (owner-authorized, read-only)",
+    "recovery:execute": "Run admin recovery / approved remediation (owner-authorized, write)",
     "users:read": "View users",
     "users:write": "Manage users",
     "audit:read": "View audit log",
@@ -70,9 +72,13 @@ _ANALYST = _READ_ONLY | {
     "reports:write",
     "schedules:write",
     "authz:write",
+    "recovery:read",
 }
 
-_SECURITY_ADMIN = _ALL - {"users:write", "settings:write"}
+# Security admins can do everything except manage users, change settings, and run
+# the state-changing recovery/remediation actions — those stay super-admin-only
+# because they modify an owned site (reset passwords, create admins, update code).
+_SECURITY_ADMIN = _ALL - {"users:write", "settings:write", "recovery:execute"}
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     UserRole.SUPER_ADMIN.value: set(_ALL),

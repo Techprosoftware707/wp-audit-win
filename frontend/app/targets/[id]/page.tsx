@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, downloadFile, sevClass } from "@/lib/api";
+import RecoveryPanel from "@/components/RecoveryPanel";
 
 export default function TargetDetail() {
   const { id } = useParams<{ id: string }>();
@@ -239,6 +240,8 @@ export default function TargetDetail() {
           </div>
         </section>
       </div>
+
+      <RecoveryPanel targetId={id} authorized={!!target.authorized} />
     </div>
   );
 }

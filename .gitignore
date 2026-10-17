@@ -40,3 +40,6 @@ evidence/
 # OS
 .DS_Store
 Thumbs.db
+
+# Built plugin artifact (reproduce with wordpress-plugin/build.sh)
+wordpress-plugin/dist/

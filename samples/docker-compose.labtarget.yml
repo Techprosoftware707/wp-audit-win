@@ -29,8 +29,13 @@ services:
       WORDPRESS_DB_PASSWORD: wp
       WORDPRESS_DB_NAME: wordpress
       WORDPRESS_DEBUG: "1"
+      # Declare this as the lab so the inert fixtures load (see lab-fixtures/).
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WPAWC_LAB', true);
     volumes:
       - labtarget_wp:/var/www/html
+      # Mount the INERT, lab-gated detection fixture as an mu-plugin (read-only).
+      - ./lab-fixtures/wp-audit-lab-fixtures.php:/var/www/html/wp-content/mu-plugins/wp-audit-lab-fixtures.php:ro
     networks: [labtarget]
 
 volumes:

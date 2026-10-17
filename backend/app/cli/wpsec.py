@@ -24,6 +24,9 @@ lab_app = typer.Typer(help="Isolated labs.", no_args_is_help=True)
 report_app = typer.Typer(help="Reports.", no_args_is_help=True)
 worker_app = typer.Typer(help="Workers.", no_args_is_help=True)
 config_app = typer.Typer(help="CLI configuration.", no_args_is_help=True)
+recovery_app = typer.Typer(
+    help="Owner-authorized admin recovery & remediation.", no_args_is_help=True
+)
 app.add_typer(target_app, name="target")
 app.add_typer(scan_app, name="scan")
 app.add_typer(finding_app, name="finding")
@@ -32,6 +35,7 @@ app.add_typer(lab_app, name="lab")
 app.add_typer(report_app, name="report")
 app.add_typer(worker_app, name="worker")
 app.add_typer(config_app, name="config")
+app.add_typer(recovery_app, name="recovery")
 
 console = Console()
 CONFIG_PATH = Path(os.path.expanduser("~/.config/wpsec/config.json"))
@@ -294,9 +298,7 @@ def poc_collect(
             data = _handle(c.post(f"/pocs/{poc_id}/collect"))
             console.print_json(data=data)
             return
-        data = _handle(
-            c.post("/pocs/collect", json={"only_uncollected": True, "limit": limit})
-        )
+        data = _handle(c.post("/pocs/collect", json={"only_uncollected": True, "limit": limit}))
     table = Table("Code", "Status", "Safety", "Lang", "SHA-256")
     for r in data.get("results", []):
         table.add_row(
@@ -377,6 +379,72 @@ def worker_list():
             str(w["last_heartbeat"] or ""),
         )
     console.print(table)
+
+
+# ------------------------------------------------------------------- recovery
+@recovery_app.command("detect")
+def recovery_detect(target_id: str):
+    """Read-only: enumerate administrators and flag lockout/damaged capabilities."""
+    with _client() as c:
+        data = _handle(c.post(f"/targets/{target_id}/recovery/detect", json={}))
+    console.print_json(data=data)
+
+
+@recovery_app.command("reset-password")
+def recovery_reset_password(
+    target_id: str,
+    user: str = typer.Argument(..., help="Admin login or user ID"),
+    reason: str = typer.Option(..., "--reason", help="Why (audited)"),
+    confirm: bool = typer.Option(False, "--confirm", help="Required: approve this change"),
+):
+    """Reset an existing administrator's password (backup first; prints it once)."""
+    with _client() as c:
+        data = _handle(
+            c.post(
+                f"/targets/{target_id}/recovery/reset-password",
+                json={"user": user, "confirm": confirm, "reason": reason},
+            )
+        )
+    console.print_json(data=data)
+    console.print("[yellow]Save the new_password now; it is not stored or logged.[/yellow]")
+
+
+@recovery_app.command("create-admin")
+def recovery_create_admin(
+    target_id: str,
+    login: str = typer.Argument(...),
+    email: str = typer.Argument(...),
+    reason: str = typer.Option(..., "--reason"),
+    confirm: bool = typer.Option(False, "--confirm"),
+):
+    """Create a new administrator (explicit confirmation required; backup first)."""
+    with _client() as c:
+        data = _handle(
+            c.post(
+                f"/targets/{target_id}/recovery/create-admin",
+                json={"login": login, "email": email, "confirm": confirm, "reason": reason},
+            )
+        )
+    console.print_json(data=data)
+    console.print("[yellow]Save the new_password now; it is not stored or logged.[/yellow]")
+
+
+@recovery_app.command("update")
+def recovery_update(
+    target_id: str,
+    component_type: str = typer.Argument(..., help="plugin|theme"),
+    slug: str = typer.Argument(...),
+    to_version: str = typer.Option(None, "--to-version", help="Target version (never downgrades)"),
+    reason: str = typer.Option(..., "--reason"),
+    confirm: bool = typer.Option(False, "--confirm"),
+):
+    """Update a plugin/theme after approval (backup first; before/after report)."""
+    body = {"component_type": component_type, "slug": slug, "confirm": confirm, "reason": reason}
+    if to_version:
+        body["to_version"] = to_version
+    with _client() as c:
+        data = _handle(c.post(f"/targets/{target_id}/remediation/update", json=body))
+    console.print_json(data=data)
 
 
 def main() -> None:

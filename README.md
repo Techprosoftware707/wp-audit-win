@@ -133,20 +133,33 @@ wpsec finding list <scan-id>
 wpsec report generate <scan-id> --format html
 wpsec poc update                      # sync free vuln-intel sources (NVD/KEV/OSV/GHSA…)
 wpsec poc collect --limit 100         # download+hash+classify PoC artifacts (never executed)
+
+# Owner-authorized recovery (needs an SSH credential + active authorization):
+wpsec recovery detect <target-id>     # enumerate admins / detect lockout (read-only)
+wpsec recovery reset-password <target-id> <admin> --reason "locked out" --confirm
+wpsec recovery update <target-id> plugin <slug> --reason "patch CVE" --confirm
 ```
+
+See [`docs/RECOVERY.md`](docs/RECOVERY.md) for the recovery/rollback workflow and
+[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for scope and confidence caveats.
+The optional companion plugin lives in
+[`wordpress-plugin/`](wordpress-plugin/) (`build.sh` produces the installable
+ZIP). Uninstall with [`scripts/uninstall.sh`](scripts/uninstall.sh) (`--purge`
+to also remove data/secrets).
 
 See [`backend/app/cli`](backend/app/cli) and `wpsec --help`.
 
 ## Repository layout
 
 ```
-backend/        FastAPI app, models, migrations, workers, CLI, tests
-worker/         Worker image (scanner tools layered on the backend image)
-frontend/       Next.js dashboard
-deploy/         Caddy reverse proxy config
-scripts/        install / update / backup / restore / health-check
-docs/           architecture, security, authorization, PoC intelligence
-samples/        sample data for a demo environment
+backend/           FastAPI app, models, migrations, workers, CLI, tests
+worker/            Worker image (scanner tools layered on the backend image)
+frontend/          Next.js dashboard
+wordpress-plugin/  Optional companion audit plugin (read-only, signed) + build.sh
+deploy/            Caddy reverse proxy config
+scripts/           install / update / backup / restore / health-check / uninstall
+docs/              architecture, security, authorization, PoC intel, recovery, limitations
+samples/           demo data, disposable lab target + inert fixtures, sample report
 ```
 
 ## Status

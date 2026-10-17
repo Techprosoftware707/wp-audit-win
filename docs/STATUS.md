@@ -59,8 +59,23 @@ placeholder.
   `X-Forwarded-For` from everywhere; final risk pass honours catalog CVSS;
   correlation preserves verification history on merge; atomic step-claim + reaper
   reconciliation of cancelled scans; SSRF IP-pinning for the PoC fetcher.
-- Test suite: 160 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
-  plus two end-to-end harnesses (real-HTTP inline, and Redis + worker distributed).
+- **Companion WordPress plugin** (`wordpress-plugin/`): optional, read-only,
+  capability-restricted (`manage_options`) audit REST API with HMAC-signed
+  reports; `build.sh` lints + produces the ZIP; php-lint clean + 11 pure-logic
+  tests; a backend verifier (`services/companion.py`) proves cross-language
+  signature interop.
+- **Owner-authorized admin recovery & remediation** (`services/recovery.py`,
+  `/targets/{id}/recovery/*`, `/remediation/update`, `wpsec recovery …`): detect
+  lockout, reset an admin password, create an admin, update a component — over
+  the owner's SSH/WP-CLI, gated by active authorization + explicit confirm +
+  super-admin `recovery:execute`, backup-first, verified, audited (never the
+  password), with rollback. Not an exploitation path.
+- Disposable **lab target** compose with an **inert, lab-gated detection
+  fixture**, a real **sample report** (`samples/sample-report.*`), and an
+  **uninstall script** (safe by default, `--purge` for data).
+- Test suite: 178 pytest tests (hermetic: SQLite + in-process queue + mocked HTTP)
+  plus two end-to-end harnesses (real-HTTP inline, and Redis + worker distributed),
+  and PHP: 11 plugin pure-logic tests (`php wordpress-plugin/tests/test-pure.php`).
 
 ## Degrades gracefully (works when the tool/engine is present)
 
@@ -103,7 +118,7 @@ after the authorization gate passes.
 
 ## Build/run environment note
 
-Validated with the native toolchain: 160 backend tests, end-to-end over real HTTP
+Validated with the native toolchain: 178 backend tests, end-to-end over real HTTP
 (inline **and** Redis + worker distributed, using the real `whatweb` binary), and
 `docker compose config` for all profiles. Live `docker build` / `docker compose
 up` were not exercised in the authoring sandbox (no Docker daemon); the

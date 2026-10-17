@@ -1,0 +1,142 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>wp-audit-win Sample Report</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;color:#111;background:#fff}
+  .wrap{max-width:900px;margin:0 auto;padding:40px 24px}
+  h1{font-size:26px;margin:0 0 4px} h2{font-size:18px;margin:28px 0 8px;border-bottom:2px solid #eee;padding-bottom:4px}
+  .muted{color:#666} .pill{display:inline-block;padding:2px 8px;border-radius:10px;color:#fff;font-size:12px}
+  .critical{background:#b91c1c}.high{background:#ea580c}.medium{background:#ca8a04}.low{background:#2563eb}.info{background:#6b7280}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:14px}
+  th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}
+  th{background:#f9fafb} .grid{display:flex;gap:16px;flex-wrap:wrap}
+  .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;min-width:120px}
+  .big{font-size:28px;font-weight:700} code{background:#f3f4f6;padding:1px 4px;border-radius:4px}
+  .auth{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:10px 14px}
+</style></head><body><div class="wrap">
+<h1>wp-audit-win Sample Report</h1>
+<div class="muted">Target: Demo WordPress (lab) &middot; http://wp.example.test/ &middot; generated 2026-10-17T05:14:56+00:00</div>
+
+<div class="auth"><strong>Authorization:</strong>
+written_consent by owner,
+status active, expires 2026-11-16 05:14:53.844225.
+Scope: [&#39;wp.example.test&#39;]
+</div>
+
+<h2>Executive Summary</h2>
+<div class="grid">
+  <div class="card"><div class="big">0</div><div class="muted">Critical</div></div>
+  <div class="card"><div class="big">0</div><div class="muted">High</div></div>
+  <div class="card"><div class="big">2</div><div class="muted">Medium</div></div>
+  <div class="card"><div class="big">2</div><div class="muted">Low</div></div>
+  <div class="card"><div class="big">1</div><div class="muted">Info</div></div>
+  <div class="card"><div class="big">5</div><div class="muted">Confirmed</div></div>
+</div>
+
+<h2>Scope &amp; Methodology</h2>
+<p class="muted">Automated assessment pipeline: discovery, WordPress fingerprint &amp; enumeration,
+network/service discovery (nmap), template detection (nuclei), WPScan intelligence, OWASP ZAP
+crawling/scanning, authenticated WP-CLI inspection (where configured), finding correlation,
+PoC/vulnerability-intelligence matching, risk scoring, and evidence collection.
+Scan mode: <code>production</code>, intensity:
+<code>standard</code>.</p>
+
+<h2>Findings</h2>
+<table><thead><tr><th>ID</th><th>Severity</th><th>Risk</th><th>Title</th><th>CVE</th><th>Status</th><th>Detectors</th></tr></thead>
+<tbody>
+
+<tr>
+  <td><code>FIND-2026-000002</code></td>
+  <td><span class="pill medium">medium</span></td>
+  <td>63</td>
+  <td>Site served over plaintext HTTP ✓</td>
+  <td></td>
+  <td>open / confirmed</td>
+  <td>discovery</td>
+</tr>
+
+<tr>
+  <td><code>FIND-2026-000004</code></td>
+  <td><span class="pill medium">medium</span></td>
+  <td>63</td>
+  <td>Username enumeration via REST API ✓</td>
+  <td></td>
+  <td>open / confirmed</td>
+  <td>wp_fingerprint</td>
+</tr>
+
+<tr>
+  <td><code>FIND-2026-000001</code></td>
+  <td><span class="pill low">low</span></td>
+  <td>35</td>
+  <td>Missing security headers: HSTS, Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy ✓</td>
+  <td></td>
+  <td>open / confirmed</td>
+  <td>discovery</td>
+</tr>
+
+<tr>
+  <td><code>FIND-2026-000005</code></td>
+  <td><span class="pill low">low</span></td>
+  <td>35</td>
+  <td>XML-RPC interface enabled ✓</td>
+  <td></td>
+  <td>open / confirmed</td>
+  <td>wp_fingerprint</td>
+</tr>
+
+<tr>
+  <td><code>FIND-2026-000003</code></td>
+  <td><span class="pill info">info</span></td>
+  <td>10</td>
+  <td>WordPress version disclosed via readme.html ✓</td>
+  <td></td>
+  <td>open / confirmed</td>
+  <td>wp_fingerprint</td>
+</tr>
+
+
+</tbody></table>
+
+<h2>Finding Detail &amp; Remediation</h2>
+
+<h3>FIND-2026-000002 — Site served over plaintext HTTP</h3>
+<p><span class="pill medium">medium</span> risk 63.2
+&middot; CWE-319</p>
+<p>The base URL uses http:// rather than https://.</p>
+<p class="muted">Affected: <code>http://wp.example.test</code></p>
+<p><strong>Remediation:</strong> Serve the site exclusively over HTTPS and enable HSTS.</p>
+
+<h3>FIND-2026-000004 — Username enumeration via REST API</h3>
+<p><span class="pill medium">medium</span> risk 63.2
+&middot; CWE-200</p>
+<p>The /wp-json/wp/v2/users endpoint returned 1 user(s), enabling username enumeration.</p>
+<p class="muted">Affected: <code>http://wp.example.test/wp-json/wp/v2/users</code></p>
+<p><strong>Remediation:</strong> Restrict the users REST endpoint for unauthenticated requests.</p>
+
+<h3>FIND-2026-000001 — Missing security headers: HSTS, Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy</h3>
+<p><span class="pill low">low</span> risk 35.4
+&middot; CWE-693</p>
+<p>The following recommended HTTP security headers were not observed on http://wp.example.test: HSTS, Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.</p>
+<p class="muted">Affected: <code>http://wp.example.test</code></p>
+<p><strong>Remediation:</strong> Add the missing headers at the web server or application layer.</p>
+
+<h3>FIND-2026-000005 — XML-RPC interface enabled</h3>
+<p><span class="pill low">low</span> risk 35.4
+&middot; CWE-306</p>
+<p>xmlrpc.php is enabled. It can be abused for brute-force amplification (system.multicall) and pingback SSRF/DDoS.</p>
+<p class="muted">Affected: <code>http://wp.example.test/xmlrpc.php</code></p>
+<p><strong>Remediation:</strong> Disable XML-RPC if unused, or restrict access.</p>
+
+<h3>FIND-2026-000003 — WordPress version disclosed via readme.html</h3>
+<p><span class="pill info">info</span> risk 10.1
+&middot; CWE-200</p>
+<p>readme.html is publicly accessible (version 6.4.1).</p>
+<p class="muted">Affected: <code>http://wp.example.test/readme.html</code></p>
+<p><strong>Remediation:</strong> Remove or block public access to readme.html.</p>
+
+
+<h2>Timeline</h2>
+<p class="muted">Scan started 2026-10-17 05:14:53.889314, finished
+2026-10-17 05:14:56.087773.</p>
+<hr><p class="muted">Generated by wp-audit-win. Authorized security assessment — handle confidentially.</p>
+</div></body></html>

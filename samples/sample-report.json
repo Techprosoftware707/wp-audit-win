@@ -1,0 +1,109 @@
+{
+  "title": "wp-audit-win Sample Report",
+  "generated_at": "2026-10-17T05:14:56+00:00",
+  "target": {
+    "name": "Demo WordPress (lab)",
+    "base_url": "http://wp.example.test/",
+    "host": "wp.example.test"
+  },
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "medium": 2,
+    "low": 2,
+    "info": 1,
+    "confirmed": 5
+  },
+  "findings": [
+    {
+      "finding_code": "FIND-2026-000002",
+      "title": "Site served over plaintext HTTP",
+      "severity": "medium",
+      "risk_score": 63.25,
+      "risk_level": "medium",
+      "cve": null,
+      "cwe": "CWE-319",
+      "status": "open",
+      "verification_status": "confirmed",
+      "confirmed": true,
+      "detectors": [
+        "discovery"
+      ],
+      "affected_asset": "http://wp.example.test",
+      "description": "The base URL uses http:// rather than https://.",
+      "remediation": "Serve the site exclusively over HTTPS and enable HSTS."
+    },
+    {
+      "finding_code": "FIND-2026-000004",
+      "title": "Username enumeration via REST API",
+      "severity": "medium",
+      "risk_score": 63.25,
+      "risk_level": "medium",
+      "cve": null,
+      "cwe": "CWE-200",
+      "status": "open",
+      "verification_status": "confirmed",
+      "confirmed": true,
+      "detectors": [
+        "wp_fingerprint"
+      ],
+      "affected_asset": "http://wp.example.test/wp-json/wp/v2/users",
+      "description": "The /wp-json/wp/v2/users endpoint returned 1 user(s), enabling username enumeration.",
+      "remediation": "Restrict the users REST endpoint for unauthenticated requests."
+    },
+    {
+      "finding_code": "FIND-2026-000001",
+      "title": "Missing security headers: HSTS, Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy",
+      "severity": "low",
+      "risk_score": 35.42,
+      "risk_level": "low",
+      "cve": null,
+      "cwe": "CWE-693",
+      "status": "open",
+      "verification_status": "confirmed",
+      "confirmed": true,
+      "detectors": [
+        "discovery"
+      ],
+      "affected_asset": "http://wp.example.test",
+      "description": "The following recommended HTTP security headers were not observed on http://wp.example.test: HSTS, Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.",
+      "remediation": "Add the missing headers at the web server or application layer."
+    },
+    {
+      "finding_code": "FIND-2026-000005",
+      "title": "XML-RPC interface enabled",
+      "severity": "low",
+      "risk_score": 35.42,
+      "risk_level": "low",
+      "cve": null,
+      "cwe": "CWE-306",
+      "status": "open",
+      "verification_status": "confirmed",
+      "confirmed": true,
+      "detectors": [
+        "wp_fingerprint"
+      ],
+      "affected_asset": "http://wp.example.test/xmlrpc.php",
+      "description": "xmlrpc.php is enabled. It can be abused for brute-force amplification (system.multicall) and pingback SSRF/DDoS.",
+      "remediation": "Disable XML-RPC if unused, or restrict access."
+    },
+    {
+      "finding_code": "FIND-2026-000003",
+      "title": "WordPress version disclosed via readme.html",
+      "severity": "info",
+      "risk_score": 10.12,
+      "risk_level": "info",
+      "cve": null,
+      "cwe": "CWE-200",
+      "status": "open",
+      "verification_status": "confirmed",
+      "confirmed": true,
+      "detectors": [
+        "wp_fingerprint"
+      ],
+      "affected_asset": "http://wp.example.test/readme.html",
+      "description": "readme.html is publicly accessible (version 6.4.1).",
+      "remediation": "Remove or block public access to readme.html."
+    }
+  ]
+}

@@ -71,7 +71,9 @@ placeholder.
   super-admin `recovery:execute`, backup-first, verified, audited (never the
   password), with rollback. Not an exploitation path. A **dashboard Recovery &
   Remediation panel** (target detail page) drives all four actions with
-  confirm+reason inputs and shows the one-time password / before-after result.
+  confirm+reason inputs and shows the one-time password / before-after result,
+  and a **top-level Recovery page** lists every target's admin/lockout status
+  at a glance (read-only detection) with links into each target's panel.
 - Disposable **lab target** compose with an **inert, lab-gated detection
   fixture**, a real **sample report** (`samples/sample-report.*`), and an
   **uninstall script** (safe by default, `--purge` for data).

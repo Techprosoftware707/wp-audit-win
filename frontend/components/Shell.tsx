@@ -11,6 +11,7 @@ const NAV = [
   ["Scans", "/scans"],
   ["Findings", "/findings"],
   ["Exploit / PoC", "/pocs"],
+  ["Recovery", "/recovery"],
   ["Workers", "/workers"],
 ];
 
